@@ -56,7 +56,6 @@ class DataManager():
 
     def fetchUnderlyingMS(self, ticker, date_length='compact'):
         #        f = web.DataReader(ticker,'robinhood')
-        print("Fetching Prices for {0} - {1}".format(ticker, date_length))
         # end = date
         # start = date - timedelta(days=10)
         # # newstart = date = timedelta(days = (365 * 5))
@@ -88,8 +87,8 @@ class DataManager():
             clean=False,
             proxy={}
         )
-
-        ms = av.data(symbol='MSFT', function='D')
+        print("Fetching Prices for {0} - {1}".format(ticker, date_length))
+        ms = av.data(symbol=ticker, function='D')
         ms.reset_index(inplace=True)
         ms_rename = {"datetime":"date", "1. open":"open","2. high":"high","3. low":"low","4. close":"close","5. volume":"volume"}
         ms.rename(columns=ms_rename, inplace=True)
@@ -176,5 +175,5 @@ class DataManager():
 if __name__ == '__main__':
 
     dm = DataManager()
-    test = dm.fetchUnderlyingMS("AAPL", date_length='full')
+    test = dm.fetchUnderlyingMS("AAAP", date_length='full')
 #

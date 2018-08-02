@@ -153,6 +153,11 @@ class DataLoader():
         # print("Delta: {0} Gamma: {1} Vega {2}".format(df['delta'].sum(), df['gamma'].sum(),df['vega'].sum() ))
         dataDate = df['date'].max()
 
+    # DROP DUPLICATE OPTION_SYMBOLS
+        preDup = len(df)
+        df = df.drop_duplicates(subset=['option_symbol'], keep='first')
+        print("{0} | Pre: {1} Post: {2}| {3} Dups".format(filename, preDup, len(df), len(df)-preDup))
+
     # CHECK DATA FOR OTHER DATES
         df_extra = df[df['date'] != dataDate]
         if len(df_extra) > 0:
@@ -163,6 +168,10 @@ class DataLoader():
 
             df_extra.to_csv("{0}_DateDups.csv".format(filename))
             # df = df[df['date'] == dataDate]
+
+    # CHECK FOR DUP OPTION SYMBOLS
+
+
 
     # CHECK DATA FOR NEW TICKERS
         unique_tickers = df[['symbol', 'date']].drop_duplicates('symbol')
@@ -300,12 +309,12 @@ class DataLoader():
                 result = connection_info.execute("select count(*) from ticker_log")
                 post_count = result.fetchone()[0]
 
-                print("Tickers Info | Added {0}| {1}5 to {2} tickers".format(ticker, pre_count, post_count))
+                print("Tickers Info | Added {0}| {1} to {2} tickers".format(ticker, pre_count, post_count))
                 logger.info("Tickers Info | Added {0}| {1} to {2} tickers".format(ticker, pre_count, post_count))
                 connection_info.dispose()
 
             # Fetch Prices for New Underlying
-                DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='full')
+            #     DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='full')
 
 ###################################################################################################################################
     def processTickers(self, filename, prev_date, prev_date_file, prev_date_5, prev_date_5_file, df):
@@ -380,15 +389,15 @@ class DataLoader():
             logger.info("Upload Option Stat: ERROR - {0} {1}: {2] ", ticker, dataDate, e)
 
     # UNDERLYING
-        try:
-            underlying_exists = connection_options.execute("SELECT exists( select * FROM underlying_data where symbol = '{0}' and date = '{1}')".format(ticker, dataDate.strftime('%Y-%m-%d'))).fetchone()[0]
-            if not underlying_exists:
-                print("Fetch Prices for {0} {1} Exists = {2}".format(ticker, dataDate, underlying_exists))
-                DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='compact')
-
-        except Exception as e:
-            print("Underlying ERROR: {0} (1)".format(ticker,dataDate))
-            logger.info("Underlying ERROR: {0} (1)".format(ticker,dataDate))
+    #     try:
+    #         underlying_exists = connection_options.execute("SELECT exists( select * FROM underlying_data where symbol = '{0}' and date = '{1}')".format(ticker, dataDate.strftime('%Y-%m-%d'))).fetchone()[0]
+    #         if not underlying_exists:
+    #             print("Fetch Prices for {0} {1} Exists = {2}".format(ticker, dataDate, underlying_exists))
+    #             DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='compact')
+    #
+    #     except Exception as e:
+    #         print("Underlying ERROR: {0} (1)".format(ticker,dataDate))
+    #         logger.info("Underlying ERROR: {0} (1)".format(ticker,dataDate))
 
 
     # UPDATE PROCESS TICKER LOG AFTER PROCESSING
@@ -432,9 +441,9 @@ class DataLoader():
                 df_prev = pd.merge(df_prev, df_update_oi, how='left', on=['option_symbol'])
 
             # CHECK FOR DATA HOLES
-                df_prev['data_holes'] = df_prev.apply(lambda x: 1 if ((x['volume'] == 0) & (x['open_interest'] > 0) & (x['open_interest_new'] == 0)) else 0, axis=1)
+                df_prev['data_holes'] = df_prev.apply(lambda x: 1 if ((x['volume'] < (0.5*x['open_interest'])) & (x['open_interest'] > 0) & (x['open_interest_new'] == 0)) else 0, axis=1)
                 dataHoles = df_prev[df_prev['data_holes'] == 1]
-                print("DATA HOLES: ", len(dataHoles))
+                # print("DATA HOLES: ", len(dataHoles))
                 if len(dataHoles) > 0:
                     print("Update Prev OI - Data Holes: {0} {1} | {2} Recs".format(ticker, dataDate, len(dataHoles)))
                     datahole_file = 'Data_Holes.csv'
@@ -452,15 +461,20 @@ class DataLoader():
                         # print(df_idx)
                         for index in df_idx:
                             # df.loc[index]['open_interest'] = row.open_interest
-
+                            orig_oi = df.at[index, 'open_interest']
                             df.at[index, 'open_interest'] = row.open_interest
+                            new_oi = df.at[index, 'open_interest']
+                            print("{0}| Orig OI {1} New OI {2}".format(row.option_symbol, orig_oi, new_oi))
 
                         # Update Hole in Previous Day OI
-                        df_prev_idx = df_prev.index[df['option_symbol'] == row.option_symbol].tolist()
+                        df_prev_idx = df_prev.index[df_prev['option_symbol'] == row.option_symbol].tolist()
                         # print(df_prev_idx)
-                        for index in df_prev_idx:
+                        for indexp in df_prev_idx:
                             # df_prev.loc[index]['open_interest_new'] = row.open_interest
-                            df_prev.at[index, 'open_interest_new'] = row.open_interest
+                            orig_oi = df_prev.at[indexp, 'open_interest_new']
+                            df_prev.at[indexp, 'open_interest_new'] = row.open_interest
+                            new_oi = df_prev.at[indexp, 'open_interest_new']
+                            print("{0} PrevOI| Orig OI {1} New OI {2}".format(row.option_symbol, orig_oi, new_oi))
 
                 df_prev['open_interest_change'] = df_prev.apply(lambda x: (x['open_interest_new']-x['open_interest']) if ~math.isnan(x['open_interest_new']) else 0, axis=1)
                 df_prev['open_interest_change'].fillna(0, inplace=True)
@@ -482,7 +496,6 @@ class DataLoader():
                     # df_prev[df_prev['OI_Check']>0].to_csv("Data_Errors\{0}_{1}_OICheckError.csv".format(ticker,prev_date))
 
                     # Fill in current data if vol and OI = 0
-
 
 
             else:
@@ -690,16 +703,18 @@ if __name__ == '__main__':
     filenames = ["20180102_OData.csv", "20180103_OData.csv", "20180104_OData.csv"]
 
     # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
-    ticker = ['AAPL']
+    ticker = []
 
     process = psutil.Process(os.getpid())
     print("Start MEM: ", (process.memory_info().rss / 1048576), "MB")
     i = 0
     for filename in csvfiles:
-        if filename[:4]=='2018':
+        if filename[:6]=='201806':
             i += 1
             print("Loading {0} {1}/{2}".format(filename, i, len(csvfiles)))
             DataLoader().loadOptionsHistorical(filename, ticker)
+            if i >30:
+                break
 
         gc.collect()
         process = psutil.Process(os.getpid())
