@@ -93,10 +93,10 @@ class DataManager():
         ms.reset_index(inplace=True)
         ms_rename = {"datetime":"date", "1. open":"open","2. high":"high","3. low":"low","4. close":"close","5. volume":"volume"}
         ms.rename(columns=ms_rename, inplace=True)
-        ms['open'] = pd.to_numeric(ms['open'], errors='coerce')
-        ms['high'] = pd.to_numeric(ms['high'], errors='coerce')
-        ms['low'] = pd.to_numeric(ms['low'], errors='coerce')
-        ms['close'] = pd.to_numeric(ms['close'], errors='coerce')
+        ms['open'] = (round(pd.to_numeric(ms['open'], errors='coerce'), 2))
+        ms['high'] = (round(pd.to_numeric(ms['high'], errors='coerce'), 2))
+        ms['low'] = (round(pd.to_numeric(ms['low'], errors='coerce'), 2))
+        ms['close'] = (round(pd.to_numeric(ms['close'], errors='coerce'), 2))
         ms['volume'] = pd.to_numeric(ms['volume'], errors='coerce')
 
 
@@ -147,7 +147,7 @@ class DataManager():
             try:
                 df_upload.reset_index(inplace=True)
                 df_upload['date'] = pd.to_datetime(df_upload['date'], format='%Y-%m-%d').dt.date
-                df_upload.to_csv("{0}_underlying_test.csv".format(ticker))
+                # df_upload.to_csv("{0}_underlying_test.csv".format(ticker))
                 df_upload.to_sql('underlying_data', connection, if_exists='append', index=False)
                 print("{0}| Update {1} prices".format(ticker, len(ms_new)))
                 # print(df_upload.reset_index().head())
@@ -176,6 +176,5 @@ class DataManager():
 if __name__ == '__main__':
 
     dm = DataManager()
-    test = dm.fetchUnderlyingMS("NVDA")
-    print(len(test))
+    test = dm.fetchUnderlyingMS("AAPL", date_length='full')
 #

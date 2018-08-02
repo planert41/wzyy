@@ -23,7 +23,7 @@ from functools import partial
 from itertools import product
 import math
 from pandas import DataFrame
-
+import os.path
 
 import psutil
 
@@ -230,6 +230,8 @@ class DataLoader():
 
             func = partial(self.processTickers, filename, prev_date, prev_date_file, prev_date_5, prev_date_5_file)
             result = pool.map(func, chunks, chunksize=1)
+            pool.close()
+            pool.join()
 
         except Exception as e:
             if e == MemoryError:
@@ -352,7 +354,7 @@ class DataLoader():
     # PREV DAY OI
         if prev_date != 0:
             try:
-                self.updatePrevOI(prev_date, df)
+                df = self.updatePrevOI(prev_date, df)
                 ticker_log['prev_oi_update'] = dt.datetime.now()
                 ticker_log['prev_oi_update_file'] = prev_date_file
             except Exception as e:
@@ -380,7 +382,7 @@ class DataLoader():
     # UNDERLYING
         try:
             underlying_exists = connection_options.execute("SELECT exists( select * FROM underlying_data where symbol = '{0}' and date = '{1}')".format(ticker, dataDate.strftime('%Y-%m-%d'))).fetchone()[0]
-            if ~underlying_exists:
+            if not underlying_exists:
                 print("Fetch Prices for {0} {1} Exists = {2}".format(ticker, dataDate, underlying_exists))
                 DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='compact')
 
@@ -428,6 +430,38 @@ class DataLoader():
                 df_update_oi = df[['option_symbol', 'open_interest']].copy()
                 df_update_oi.columns = ["option_symbol", "open_interest_new"]
                 df_prev = pd.merge(df_prev, df_update_oi, how='left', on=['option_symbol'])
+
+            # CHECK FOR DATA HOLES
+                df_prev['data_holes'] = df_prev.apply(lambda x: 1 if ((x['volume'] == 0) & (x['open_interest'] > 0) & (x['open_interest_new'] == 0)) else 0, axis=1)
+                dataHoles = df_prev[df_prev['data_holes'] == 1]
+                print("DATA HOLES: ", len(dataHoles))
+                if len(dataHoles) > 0:
+                    print("Update Prev OI - Data Holes: {0} {1} | {2} Recs".format(ticker, dataDate, len(dataHoles)))
+                    datahole_file = 'Data_Holes.csv'
+                    if os.path.isfile(datahole_file):
+                        dataHoles.to_csv(datahole_file, mode='a', header=False)
+                    else:
+                        dataHoles.to_csv(datahole_file, header=True)
+                        print("Create ", datahole_file)
+
+                    for row in dataHoles.itertuples():
+                        # print(row.option_symbol, row.open_interest)
+                        # print(df.head())
+                        # Update Hole in Current Day Data
+                        df_idx = df.index[df['option_symbol'] == row.option_symbol].tolist()
+                        # print(df_idx)
+                        for index in df_idx:
+                            # df.loc[index]['open_interest'] = row.open_interest
+
+                            df.at[index, 'open_interest'] = row.open_interest
+
+                        # Update Hole in Previous Day OI
+                        df_prev_idx = df_prev.index[df['option_symbol'] == row.option_symbol].tolist()
+                        # print(df_prev_idx)
+                        for index in df_prev_idx:
+                            # df_prev.loc[index]['open_interest_new'] = row.open_interest
+                            df_prev.at[index, 'open_interest_new'] = row.open_interest
+
                 df_prev['open_interest_change'] = df_prev.apply(lambda x: (x['open_interest_new']-x['open_interest']) if ~math.isnan(x['open_interest_new']) else 0, axis=1)
                 df_prev['open_interest_change'].fillna(0, inplace=True)
 
@@ -439,8 +473,17 @@ class DataLoader():
                 df_prev['OI_Check'] = df_prev.apply(lambda x: 1 if ((x['open_interest_change']) > (x['volume'] + 50)) else 0, axis=1)
                 if df_prev['OI_Check'].sum() > 0:
                     print("{0} New OI Update Errors {1}".format(ticker, df_prev['OI_Check'].sum()))
-                    df_prev[df_prev['OI_Check']>0].to_csv("Data_Errors\{0}_{1}_OICheckError.csv".format(ticker,prev_date))
-                df_prev.drop(columns=['OI_Check'], inplace=True)
+                    dataerror_file = 'Data_Errors.csv'
+                    if os.path.isfile(dataerror_file):
+                        df_prev[df_prev['OI_Check'] > 0].to_csv(dataerror_file, mode='a', header=False)
+                    else:
+                        df_prev[df_prev['OI_Check'] > 0].to_csv(dataerror_file, header=True)
+                        print("Create ", dataerror_file)
+                    # df_prev[df_prev['OI_Check']>0].to_csv("Data_Errors\{0}_{1}_OICheckError.csv".format(ticker,prev_date))
+
+                    # Fill in current data if vol and OI = 0
+
+
 
             else:
                 print("Update PrevOI: NO PREV DATA {0} {1}".format(ticker, prev_date.strftime('%m/%d/%Y')))
@@ -453,7 +496,7 @@ class DataLoader():
     # UPLOAD UPDATED DAY-1 DATA TO SQL
         try:
             pre_count = connection_options.execute("select count(*) from option_data where symbol = '{0}'".format(ticker)).fetchone()[0]
-
+            df_prev.drop(columns=['OI_Check', 'data_holes'], inplace=True)
             # DELETE AND REPLACE OPTION DATA FROM PREV DAY
             connection_options.execute("delete from option_data where symbol = '{0}' AND date = '{1}'".format(ticker, prev_date.strftime('%Y-%m-%d')))
             df_prev.to_sql('option_data', connection_options, if_exists='append', index=False)
@@ -473,7 +516,11 @@ class DataLoader():
             logger.info("Upload Day-1 Data: ERROR: {0} {1} {2}".format(ticker, prev_date, e))
             connection_options.dispose()
 
-        connection_options.dispose()
+        finally:
+            connection_options.dispose()
+            return df
+
+
             # connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
             # data_count = connection_options.execute("select date, count(date), SUM (open_interest_new) as open_interest_new from {0} group by date".format(tableName)).fetchall()
             # # print("AFTER UPDATE: ", data_count)
@@ -621,6 +668,18 @@ if __name__ == '__main__':
 
 
     files = os.listdir(DATA_PATH)
+    try:
+        dataError_File = 'Data_Errors.csv'
+        dataHole_File = 'Data_Holes.csv'
+        if os.path.isfile(dataError_File):
+            os.remove(dataError_File)
+            print("Deleted ", dataError_File)
+        if os.path.isfile(dataHole_File):
+            os.remove(dataHole_File)
+            print("Deleted ", dataHole_File)
+    except Exception as e:
+        print(e)
+
     csvfiles = [fi for fi in files if (fi.endswith(".csv") and fi.startswith("2018"))]
 
 
@@ -628,6 +687,7 @@ if __name__ == '__main__':
     filenames += ["20180723_OData.csv", "20180724_OData.csv", "20180725_OData.csv", "20180726_OData.csv", "20180727_OData.csv"]
     # filenames = ["20180725_OData.csv"]
 
+    filenames = ["20180102_OData.csv", "20180103_OData.csv", "20180104_OData.csv"]
 
     # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
     ticker = ['AAPL']
@@ -645,7 +705,6 @@ if __name__ == '__main__':
         process = psutil.Process(os.getpid())
     #        print(objgraph.show_most_common_types())
     print("END - PROCESSED {0} Files and {1} tickers".format(len(filenames), len(ticker)))
-
 
 
 

@@ -165,7 +165,7 @@ def createUnderlyingInit():
         high numeric(10,2),
         low numeric(10,2),
         open numeric(10,2),
-        volume numeric(10,2),
+        volume integer,
         sma_200 numeric(10,2),
         sma_100 numeric(10,2),
         ema_8 numeric(10,2)
