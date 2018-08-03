@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 if not len(logger.handlers):
     formatter = logging.Formatter('%(asctime)s %(filename)s: %(funcName)s: %(message)s')
     logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler('FTP' + '.log', mode='w')
+    fh = logging.FileHandler('Load_Option_' + today.strftime('%y%m%d') + '.log', mode='w')
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     logger.addHandler(fh)

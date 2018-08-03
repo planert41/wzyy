@@ -217,20 +217,29 @@ def createOptionFlagInit():
         volume integer,
         open_interest integer,
         open_interest_new integer,
-        open_interest_new_change integer,
-        open_interest_5day integer,
         open_interest_change integer,
+        open_interest_change_vol_pct numeric(10,4),
+        open_interest_5day integer,
+        open_interest_5day_change integer,
+        open_interest_5day_change_pct numeric(10,4),
+        iv numeric(10,4),
+        delta numeric(10,4),
+        gamma numeric(10,4),
+        vega numeric(10,4),
 
         category varchar,
 
         flag integer,
+        
         total_z_flag integer,
         fm_z_flag integer,
         largest_z_flag integer,
+        largest_5dayoi_z_flag integer,
 
         total_z numeric(10,4),
         fm_z numeric(10,4), 
-        largest_z numeric(10,4),           
+        largest_z numeric(10,4),   
+        largest_5dayoi_z numeric(10,4),        
 
         call_vol_mean_adj numeric(10,4),
         call_vol_std_adj numeric(10,4), 
@@ -243,7 +252,12 @@ def createOptionFlagInit():
         fm_put_vol_std_adj numeric(10,4), 
 
         largest_vol_mean_adj numeric(10,4),
-        largest_vol_std_adj numeric(10,4)
+        largest_vol_std_adj numeric(10,4),
+        
+        largest_5dayoi_mean_adj numeric(10,4),
+        largest_5dayoi_vol_adj numeric(10,4)
+        
+        
         )
         """.format(tableName))
 
@@ -568,9 +582,12 @@ def clearAll():
 
 if __name__ == '__main__':
     #
-    dropAllTables()
-    # clearAll()
-    createAll()
+    # dropAllTables()
+    # # clearAll()
+    # createAll()
+
+    createOptionFlagInit()
+
 
     # clearFilesForDate('2018-07-23')
     # createOptionsInitFile()
