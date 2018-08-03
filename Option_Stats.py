@@ -103,16 +103,17 @@ class OptionStats():
         result['max_opt_1_oi'] = df_max[0][1]
         result['max_opt_1_call_put'] = df_max[0][2]
         result['max_opt_1_option'] = df_max[0][3]
+        if len(df_max)>1:
+            result['max_opt_2_vol'] = df_max[1][0]
+            result['max_opt_2_oi'] = df_max[1][1]
+            result['max_opt_2_call_put'] = df_max[1][2]
+            result['max_opt_2_option'] = df_max[1][3]
 
-        result['max_opt_2_vol'] = df_max[1][0]
-        result['max_opt_2_oi'] = df_max[1][1]
-        result['max_opt_2_call_put'] = df_max[1][2]
-        result['max_opt_2_option'] = df_max[1][3]
-
-        result['max_opt_3_vol'] = df_max[2][0]
-        result['max_opt_3_oi'] = df_max[2][1]
-        result['max_opt_3_call_put'] = df_max[2][2]
-        result['max_opt_3_option'] = df_max[2][3]
+        if len(df_max)>2:
+            result['max_opt_3_vol'] = df_max[2][0]
+            result['max_opt_3_oi'] = df_max[2][1]
+            result['max_opt_3_call_put'] = df_max[2][2]
+            result['max_opt_3_option'] = df_max[2][3]
         if 'open_interest_5day_change' in df.columns:
             df_max_5day = sorted(zip(df['open_interest_5day_change'], df['option_symbol']), reverse=True)[:3]
             result['max_5day_oi_1_change'] = df_max_5day[0][0]

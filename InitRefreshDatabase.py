@@ -61,7 +61,7 @@ def createOptionsInit():
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (option_symbol , date)".format(tableName))
-            cur.execute("CREATE INDEX option_data_symbol_index ON option_data (symbol, option_symbol);")
+            cur.execute("CREATE INDEX option_data_index ON option_data(symbol, option_symbol, date);")
 
             cur.close()
             conn.commit()
@@ -138,7 +138,7 @@ def createOptionsStatInit():
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (date , symbol)".format(tableName))
-            cur.execute("CREATE INDEX option_stat_symbol_index ON option_data (symbol);")
+            cur.execute("CREATE INDEX option_stat_index ON option_stat (symbol, date);")
 
             cur.close()
             conn.commit()
@@ -165,7 +165,7 @@ def createUnderlyingInit():
         high numeric(10,2),
         low numeric(10,2),
         open numeric(10,2),
-        volume integer,
+        volume bigint,
         sma_200 numeric(10,2),
         sma_100 numeric(10,2),
         ema_8 numeric(10,2)
@@ -181,7 +181,7 @@ def createUnderlyingInit():
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (symbol , date)".format(tableName))
-            cur.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")
+            cur.execute("CREATE INDEX underlying_data_index ON underlying_data(symbol, date);")
 
 
             cur.close()
@@ -258,6 +258,7 @@ def createOptionFlagInit():
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (option_symbol , date)".format(tableName))
+            cur.execute("CREATE INDEX option_flag_index ON option_flag(symbol, option_symbol, date);")
 
             cur.close()
             conn.commit()
@@ -301,6 +302,7 @@ def createProcessLog():
             cur.execute(commands)
             cur.execute("alter table {0} add unique (source_date, date)".format(tableName))
 
+
             cur.close()
             conn.commit()
             print("Create {0} Init".format(tableName))
@@ -335,6 +337,7 @@ def createProcessLogTicker():
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
+        cur.execute("CREATE INDEX process_log_ticker_index ON process_log_ticker(symbol, source_date);")
 
         exists = cur.fetchall()[0][0]
 
@@ -504,7 +507,8 @@ def createAll():
 def dropAllTables():
     conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
     cur = conn.cursor()
-    tableNames = ["option_data", "option_stat", "option_flag", "underlying_data", "process_log", "ticker_log",'process_log_ticker']
+    tableNames = ["option_data", "option_stat", "option_flag", "process_log",'process_log_ticker']
+    # KEEPING UNDERLYING DATA
 
     try:
         for table in tableNames:
@@ -539,7 +543,7 @@ def clearAll():
     conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
     cur = conn.cursor()
 
-    tableNames = ["option_data", "option_stat", "option_flag", "underlying_data", "process_log", "ticker_log"]
+    tableNames = ["option_data", "option_stat", "option_flag", "process_log"]
 
     try:
         for table in tableNames:

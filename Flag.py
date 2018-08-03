@@ -81,7 +81,7 @@ class Flag:
         flags = pd.DataFrame()
         for ticker_inp in tickers:
 
-            #    Using 20 days avg to calculate historical option stats. Queries for days processed + avg length. Cap avg at 5 std
+        #    Using 20 days avg to calculate historical option stats. Queries for days processed + avg length. Cap avg at 3 std
             avg_window = 20
             z_limit = 2.5
             printid = "{0} {1}: {2} Day".format(ticker_inp, date.strftime('%Y-%m-%d'), days)
@@ -89,7 +89,7 @@ class Flag:
 
             conn = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
 
-            #   Pull in Option Stats
+        #   Pull in Option Stats
             try:
                 table_name = ticker_inp + "_stat"
                 request = "SELECT * FROM option_stat WHERE symbol = '{0}' AND date <= '{1}' ORDER BY date ASC LIMIT {2} ;".format(tickers, date, days + avg_window)
@@ -110,17 +110,22 @@ class Flag:
                 df_stat['total_fm_call_vol'] = (df_stat['fm_call_vol'] + df_stat['wk_call_vol'])
                 df_stat['total_fm_put_vol'] = (df_stat['fm_put_vol'] + df_stat['wk_put_vol'])
 
-                # Calculate 20-day vol mean/std capping outliers at 3 std
-
+        # Calculate 20-day vol mean/std capping outliers at 3 std
+            # TOTAL CALL PUT
                 df_stat['call_vol_mean_adj'], df_stat['call_vol_std_adj'] = Stat.cap_stats(df_stat['total_call_vol'], window=avg_window)
                 df_stat['put_vol_mean_adj'], df_stat['put_vol_std_adj'] = Stat.cap_stats(df_stat['total_put_vol'], window=avg_window)
 
+            # FM CALL PUT
                 df_stat['fm_call_vol_mean_adj'], df_stat['fm_call_vol_std_adj'] = Stat.cap_stats(df_stat['total_fm_call_vol'], window=avg_window)
                 df_stat['fm_put_vol_mean_adj'], df_stat['fm_put_vol_std_adj'] = Stat.cap_stats(df_stat['total_fm_put_vol'], window=avg_window)
 
                 # df_stat['fm_vol_mean_adj'], df_stat['fm_vol_std_adj'] = Stat.cap_stats(df_stat['total_fm_vol'], window=avg_window)
-
+            # DAILY LARGEST VOL
                 df_stat['largest_vol_mean_adj'], df_stat['largest_vol_std_adj'] = Stat.cap_stats(df_stat['max_opt_1_vol'], window=avg_window)
+
+            # DAILY LARGEST 5 DAY OI CHANGE
+                df_stat['largest_5dayoi_mean_adj'], df_stat['largest_5dayoi_vol_adj'] = Stat.cap_stats(df_stat['max_5day_oi_1_change'], window=avg_window)
+
 
                 print("{0} - {1} Daily Records {2} rolling averages".format(printid, len(df_stat), df_stat['call_vol_mean_adj'].astype(bool).sum(axis=0)))
                 # df_stat.to_csv("stat_check.csv")
@@ -143,7 +148,7 @@ class Flag:
                 if len(df_daily) > 0:
 
                     mergeCols = ['call_vol_mean_adj', 'call_vol_std_adj', 'put_vol_mean_adj', 'put_vol_std_adj', 'fm_call_vol_mean_adj', 'fm_call_vol_std_adj', 'fm_put_vol_mean_adj', 'fm_put_vol_std_adj', 'largest_vol_mean_adj',
-                                 'largest_vol_std_adj']
+                                 'largest_vol_std_adj','largest_5dayoi_mean_adj','largest_5dayoi_vol_adj']
                     df_stat = df_stat[mergeCols].reset_index()
 
                     # Convert DateTime Index to Date
@@ -166,6 +171,8 @@ class Flag:
 
                     # df_daily['fm_z'] = np.where(df_daily['category'].isin(['WK', 'FM']), (df_daily['volume'] - df_daily['fm_vol_mean_adj'])/df_daily['fm_vol_std_adj'], 0)
                     df_daily['largest_z'] = (df_daily['volume'] - df_daily['largest_vol_mean_adj']) / df_daily['largest_vol_std_adj']
+                    df_daily['largest_5dayoi_z'] = (df_daily['open_interest_change'] - df_daily['largest_5dayoi_mean_adj']) / df_daily['largest_5dayoi_vol_adj']
+
 
                     df_daily['total_z_flag'] = np.where(df_daily['total_z'] > z_limit, 1, 0)
                     df_daily['fm_z_flag'] = np.where(df_daily['fm_z'] > z_limit, 1, 0)

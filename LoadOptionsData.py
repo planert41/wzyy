@@ -24,6 +24,8 @@ from itertools import product
 import math
 from pandas import DataFrame
 import os.path
+from Underlying import existingTickers
+import time
 
 import psutil
 
@@ -49,17 +51,6 @@ if not len(logger.handlers):
     fh.setFormatter(formatter)
     logger.addHandler(fh)
 
-
-class existingTickers():
-    def all(self):
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
-        cur = conn.cursor()
-        cur.execute("select symbol from ticker_log order by symbol asc")
-        fetched = cur.fetchall()
-        tickers = [x[0] for x in fetched]
-        cur.close()
-        conn.close()
-        return tickers
 
 
 #    @
@@ -92,11 +83,61 @@ class DataLoader():
         df['vega'] = df['vega'].apply(lambda x: float(x) if x.lstrip('-').isdigit() else 0)
         return df
 
+    def checkTickerTables(self, df):
+        #  Check Tickers
+        existing_tickers = existingTickers().all()
+        dataDate = df['date'].max()
+        checkTicker_start = time.time()
+
+        print("{0} tickers| {1} file| {2} database".format(dataDate.strftime('%m/%d/%Y'), len(df), len(existing_tickers)), "| MEM: ", (process.memory_info().rss / 1048576), "MB")
+        logger.info("{0} tickers| {1} file| {2} database| MEM:{3} MB".format(dataDate.strftime('%m/%d/%Y'), len(df), len(existing_tickers), (process.memory_info().rss / 1048576)))
+
+        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+        start = connection_info.execute("select count(*) from ticker_log where end_date is null").fetchone()[0]
+
+
+    # LOOP THROUGH EXISTING TICKERS, CHECK FOR TICKERS THAT DISAPPEAR
+        for ticker in existing_tickers:
+            ticker_check = df[df['symbol'] == ticker]
+            if len(ticker_check) == 0:
+                print("Update ticker_log {0}: {1} End Date".format(ticker, dataDate))
+                logger.info("Update ticker_log {0}: {1} End Date".format(ticker, dataDate))
+                connection_info.execute("UPDATE ticker_log set end_date = '{0}' where symbol = '{1}'".format(dataDate, ticker))
+
+    # LOOP THROUGH DATA, CHECK FOR NEW TICKERS
+        for index, row in df.iterrows():
+            ticker = row['symbol']
+
+            # Add New Tickers to Ticker Log
+            if ticker not in existing_tickers:
+                print("NEW TICKER: {0}".format(ticker))
+                result = connection_info.execute("select count(*) from ticker_log")
+                pre_count = result.fetchone()[0]
+
+                connection_info.execute("insert into ticker_log (symbol, start_date) values  ('{0}','{1}')".format(ticker, dataDate))
+
+                result = connection_info.execute("select count(*) from ticker_log")
+                post_count = result.fetchone()[0]
+
+                print("Tickers Info | Added {0}| {1} to {2} tickers".format(ticker, pre_count, post_count))
+                logger.info("Tickers Info | Added {0}| {1} to {2} tickers".format(ticker, pre_count, post_count))
+
+        final = connection_info.execute("select count(*) from ticker_log where end_date is null").fetchone()[0]
+        connection_info.dispose()
+        checkTicker_end = time.time()
+        print("Finish Checking Tickers| {0} | {1} to {2} symbols | {3}".format(dataDate.strftime('%m/%d/%Y'), start, final, checkTicker_end-checkTicker_start))
+        logger.info("Finish Checking Tickers| {0} | {1} to {2} symbols | {3}".format(dataDate.strftime('%m/%d/%Y'), start, final, checkTicker_end-checkTicker_start))
+
+
+            # Fetch Prices for New Underlying
+            #     DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='full')
+
     def loadOptionsHistorical(self, filename, tickers):
 
         process = psutil.Process(os.getpid())
         filename = filename.replace(".zip", "")
         connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+        file_start = time.time()
 
         # Check if current date file has already been processed. Skips processing if already processed.
         if self.checkFileProcessed(filename):
@@ -126,9 +167,9 @@ class DataLoader():
                   'DataDate': pd.np.str_,
                     }
 
+
         df = pd.read_csv(DATA_PATH + '{0}'.format(str(filename)), encoding='ISO-8859-1', usecols=usecols, dtype=dtypes, na_values=['Infinity','-Infinity'])
-        print("{0} Loaded| {1} Recs".format(filename, len(df)), "| MEM: ", (process.memory_info().rss / 1048576), "MB")
-        logger.info("{0} Loaded| {1} Recs| MEM: {2} MB".format(filename, len(df), (process.memory_info().rss / 1048576)))
+        init_df = len(df)
 
         if len(df) == 0:
             print("No Data in file. Returning loop")
@@ -158,6 +199,11 @@ class DataLoader():
         df = df.drop_duplicates(subset=['option_symbol'], keep='first')
         print("{0} | Pre: {1} Post: {2}| {3} Dups".format(filename, preDup, len(df), len(df)-preDup))
 
+        read_end = time.time()
+        print("{0} Loaded| {1} Read| {2} Process | TIME: {3}".format(filename, init_df, len(df), read_end-file_start))
+        logger.info("{0} Loaded| {1} Read| {2} Process | TIME: {3}".format(filename, init_df, len(df), read_end-file_start))
+
+
     # CHECK DATA FOR OTHER DATES
         df_extra = df[df['date'] != dataDate]
         if len(df_extra) > 0:
@@ -169,9 +215,6 @@ class DataLoader():
             df_extra.to_csv("{0}_DateDups.csv".format(filename))
             # df = df[df['date'] == dataDate]
 
-    # CHECK FOR DUP OPTION SYMBOLS
-
-
 
     # CHECK DATA FOR NEW TICKERS
         unique_tickers = df[['symbol', 'date']].drop_duplicates('symbol')
@@ -181,7 +224,7 @@ class DataLoader():
 
     # DROP INDEX IN DATA BEFORE LOADING
         try:
-            connection_info.execute("DROP INDEX option_data_symbol_index;")
+            connection_info.execute("DROP INDEX IF EXISTS option_data_symbol_index;")
         except Exception as e:
             print("Index Drop ERROR: ", e)
 
@@ -253,70 +296,75 @@ class DataLoader():
                 return
 
         # UPDATE INDEX IN DATA AFTER LOADING
-        try:
-            connection_info.execute("CREATE INDEX option_data_symbol_index ON option_data (symbol, option_symbol);")
-        except Exception as e:
-            print("Index Add ERROR: ", e)
+        # try:
+        #     index_start = time.time()
+        #     connection_info.execute("CREATE INDEX option_data_symbol_index ON option_data (symbol, option_symbol);")
+        #     index_end = time.time()
+        #     print("Re-index Option Data |", index_end - index_start)
+        #
+        # except Exception as e:
+        #     print("Index Add ERROR: ", e)
 
         # UPDATE PROCESS LOG AFTER PROCESSING
         try:
+            processlog_start = time.time()
             process_columns = "(date, source_file, source_date, record_count, ticker_count)"
             connection_info.execute("insert into process_log {0} values  ('{1}','{2}','{3}','{4}','{5}')".format(process_columns, pd.datetime.now(), filename, df['date'].max(), len(df), len(unique_tickers)))
-            print("{0} process_log | {1} Run | {2} Data| {3} rows| {4} tickers".format(filename, pd.datetime.now().strftime('%m/%d/%Y'), df['date'].max(), len(df), len(unique_tickers)))
-            logger.info("{0} process_log | {1} Run | {2} Data| {3} rows| {4} tickers".format(filename, pd.datetime.now().strftime('%m/%d/%Y'), df['date'].max(), len(df), len(unique_tickers)))
+            processlog_end = time.time()
+
+            print("{0} process_log | {1} Run | {2} Data| {3} rows| {4} tickers | {5}".format(filename, pd.datetime.now().strftime('%m/%d/%Y'), df['date'].max(), len(df), len(unique_tickers), processlog_end-processlog_start))
+            logger.info("{0} process_log | {1} Run | {2} Data| {3} rows| {4} tickers | {5}".format(filename, pd.datetime.now().strftime('%m/%d/%Y'), df['date'].max(), len(df), len(unique_tickers), processlog_end-processlog_start))
 
         except Exception as e:
             print('UPDATE PROCESS LOG: ', e, filename)
             logger.info('UPDATE PROCESS LOG: ', e, filename)
             connection_info.dispose()
+        file_end = time.time()
 
-        print(filename," | FINISH PROCESSING")
+        print("{0} | FINISH PROCESSING | {1}".format(filename,file_end-file_start))
         print("           ")
-        logger.info("{0} | FINISH PROCESSING".format(filename))
+        logger.info("{0} | FINISH PROCESSING | {1}".format(filename,file_end-file_start))
 
     #        print("Removed " + extractFileName," MEM: ",  (process.memory_info().rss/1048576),"MB")
 
-    def checkTickerTables(self, df):
-        #  Check Tickers
-        existing_tickers = existingTickers().all()
-        dataDate = df['date'].max()
-
-        print("{0} tickers| {1} file| {2} database".format(dataDate.strftime('%m/%d/%Y'), len(df), len(existing_tickers)), "| MEM: ", (process.memory_info().rss / 1048576), "MB")
-        logger.info("{0} tickers| {1} file| {2} database| MEM:{3} MB".format(dataDate.strftime('%m/%d/%Y'), len(df), len(existing_tickers), (process.memory_info().rss / 1048576)))
-
-        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
-
-    # LOOP THROUGH EXISTING TICKERS, CHECK FOR TICKERS THAT DISAPPEAR
-        for ticker in existing_tickers:
-            ticker_check = df[df['symbol'] == ticker]
-            if len(ticker_check) == 0:
-                print("Update ticker_log {0}: {1} End Date".format(ticker, dataDate))
-                logger.info("Update ticker_log {0}: {1} End Date".format(ticker, dataDate))
-                connection_info.execute("UPDATE ticker_log set end_date = '{0}' where symbol = '{1}'".format(dataDate, ticker))
-
-    # LOOP THROUGH DATA, CHECK FOR NEW TICKERS
-        for index, row in df.iterrows():
-            ticker = row['symbol']
-
-            # Add New Tickers to Ticker Log
-            if ticker not in existing_tickers:
-                print("NEW TICKER: {0}".format(ticker))
-                result = connection_info.execute("select count(*) from ticker_log")
-                pre_count = result.fetchone()[0]
-
-                connection_info.execute("insert into ticker_log (symbol, start_date) values  ('{0}','{1}')".format(ticker, dataDate))
-
-                result = connection_info.execute("select count(*) from ticker_log")
-                post_count = result.fetchone()[0]
-
-                print("Tickers Info | Added {0}| {1} to {2} tickers".format(ticker, pre_count, post_count))
-                logger.info("Tickers Info | Added {0}| {1} to {2} tickers".format(ticker, pre_count, post_count))
-                connection_info.dispose()
-
-            # Fetch Prices for New Underlying
-            #     DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='full')
 
 ###################################################################################################################################
+    def removeIndex(self):
+        index_start = time.time()
+        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+        try:
+            connection_info.execute("DROP IF EXISTS INDEX option_data_index;")
+            connection_info.execute("DROP IF EXISTS INDEX option_stat_index;")
+            connection_info.execute("DROP IF EXISTS INDEX underlying_data_index;")
+            connection_info.execute("DROP IF EXISTS INDEX option_flag_index;")
+            connection_info.execute("DROP IF EXISTS INDEX process_log_ticker_index;")
+
+        except Exception as e:
+            print("Index Add ERROR: ", e)
+        finally:
+            connection_info.dispose()
+            index_end = time.time()
+            print("Remove Option Data |", index_end - index_start)
+
+    def addIndex(self):
+        index_start = time.time()
+        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+        try:
+            connection_info.execute("CREATE INDEX option_data_index ON option_data(symbol, option_symbol, date);")
+            connection_info.execute("CREATE INDEX option_stat_index ON option_stat (symbol, date);")
+            connection_info.execute("CREATE INDEX underlying_data_index ON underlying_data(symbol, date);")
+            connection_info.execute("CREATE INDEX option_flag_index ON option_flag(symbol, option_symbol, date);")
+            connection_info.execute("CREATE INDEX process_log_ticker_index ON process_log_ticker(symbol, source_date);")
+
+        except Exception as e:
+            print("Index Add ERROR: ", e)
+        finally:
+            connection_info.dispose()
+            index_end = time.time()
+            print("Re-index Option Data |", index_end - index_start)
+
     def processTickers(self, filename, prev_date, prev_date_file, prev_date_5, prev_date_5_file, df):
         if 'company_name' in df.columns:
             df.drop(columns='company_name', inplace=True)
@@ -324,6 +372,7 @@ class DataLoader():
         ticker = df['symbol'].iloc[0]
         dataDate = df['date'].max()
         dataDatePrint = dataDate.strftime('%m/%d/%Y')
+        ticker_start = time.time()
 
         print("{0} Processing | Day-1: {1} {2} | Day-5: {3} {4}".format(ticker,prev_date, prev_date_file, prev_date_5, prev_date_5_file))
 
@@ -377,16 +426,16 @@ class DataLoader():
             ticker_log['record_count'] = len(df)
 
         except Exception as e:
-            print("Upload Data: ERROR - {0} {1}: {2}".format(ticker, dataDate, e))
-            logger.info("Upload Data: ERROR - {0} {1}: {2}".format(ticker, dataDate, e))
+            print("Upload Data: ERROR - {0} {1}: {2}".format(ticker, dataDate.strftime('%m/%d/%Y'), e))
+            logger.info("Upload Data: ERROR - {0} {1}: {2}".format(ticker, dataDate.strftime('%m/%d/%Y'), e))
 
     # OPTION STAT SUMMARY
         try:
             self.uploadOptionStat(dataDate, df)
             ticker_log['stat_date'] = dt.datetime.now()
         except Exception as e:
-            print("Upload Option Stat: ERROR - {0} {1}: {2] ", ticker, dataDate, e)
-            logger.info("Upload Option Stat: ERROR - {0} {1}: {2] ", ticker, dataDate, e)
+            print("Upload Option Stat: ERROR - {0} {1}: {2] ", ticker, dataDate.strftime('%m/%d/%Y'), e)
+            logger.info("Upload Option Stat: ERROR - {0} {1}: {2] ", ticker, dataDate.strftime('%m/%d/%Y'), e)
 
     # UNDERLYING
     #     try:
@@ -414,8 +463,9 @@ class DataLoader():
 
     # WRAP UP
         process = psutil.Process(os.getpid())
-        print("{0} Process | {1} | {2} Rec | {3} {4} | SUCCESS".format(ticker, dataDatePrint, len(df),(process.memory_info().rss/1048576),"MB"))
-        logger.info("{0} Process | {1} | {2} Rec | {3} {4} | SUCCESS".format(ticker, dataDatePrint, len(df),(process.memory_info().rss/1048576),"MB"))
+        ticker_end = time.time()
+        print("{0} Process | {1} | {2} Rec | {3} {4} | SUCCESS | {5}".format(ticker, dataDatePrint, len(df),(process.memory_info().rss/1048576),"MB", ticker_end - ticker_start))
+        logger.info("{0} Process | {1} | {2} Rec | {3} {4} | SUCCESS | {5}".format(ticker, dataDatePrint, len(df),(process.memory_info().rss/1048576),"MB",ticker_end - ticker_start))
         connection_options.dispose()
 
 ################################################################################################
@@ -426,6 +476,7 @@ class DataLoader():
         ticker = df['symbol'].iloc[0]
         dataDate = df['date'].iloc[0]
         prev_date = prev_date
+        prev_start = time.time()
         connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
 
         # READ IN DAY-1 DATA
@@ -479,8 +530,9 @@ class DataLoader():
                 df_prev['open_interest_change'] = df_prev.apply(lambda x: (x['open_interest_new']-x['open_interest']) if ~math.isnan(x['open_interest_new']) else 0, axis=1)
                 df_prev['open_interest_change'].fillna(0, inplace=True)
 
-                print("{0} | {1} Rec| {4}: {5} total_OI| {2}: {3} total_OI_prevday ".format(ticker, len(df_prev), prev_date, df_prev['open_interest'].sum(), dataDate.strftime('%Y=%m%d'), df_prev['open_interest_new'].sum()))
-                logger.info("{0} | {1} Rec| {4}: {5} total_OI| {2}: {3} total_OI_prevday ".format(ticker, len(df_prev), prev_date, df_prev['open_interest'].sum(), dataDate.strftime('%Y=%m%d'), df_prev['open_interest_new'].sum()))
+
+                print("{0} | {1} Rec| {4}: {5} total_OI| {2}: {3} total_OI_prevday | {4}".format(ticker, len(df_prev), prev_date, df_prev['open_interest'].sum(), dataDate.strftime('%Y-%m-%d'), df_prev['open_interest_new'].sum()))
+                logger.info("{0} | {1} Rec| {4}: {5} total_OI| {2}: {3} total_OI_prevday | {4} ".format(ticker, len(df_prev), prev_date, df_prev['open_interest'].sum(), dataDate.strftime('%Y-%m-%d'), df_prev['open_interest_new'].sum()))
 
             # CHECK IF OI INCREASE > VOLUME
                 # OK IF OI DECREASES MORE THAN VOLUME - Data not the cleanest, so putting a 50 vol buffer
@@ -509,7 +561,7 @@ class DataLoader():
     # UPLOAD UPDATED DAY-1 DATA TO SQL
         try:
             pre_count = connection_options.execute("select count(*) from option_data where symbol = '{0}'".format(ticker)).fetchone()[0]
-            df_prev.drop(columns=['OI_Check', 'data_holes'], inplace=True)
+            df_prev.drop(columns=['OI_Check', 'data_holes'], inplace=True, errors='ignore')
             # DELETE AND REPLACE OPTION DATA FROM PREV DAY
             connection_options.execute("delete from option_data where symbol = '{0}' AND date = '{1}'".format(ticker, prev_date.strftime('%Y-%m-%d')))
             df_prev.to_sql('option_data', connection_options, if_exists='append', index=False)
@@ -520,8 +572,9 @@ class DataLoader():
                 print("ERROR: Update OI records not matching {0} {1} {2} to {3}", ticker, prev_date.strftime('%m/%d/%Y'), pre_count, post_count)
                 logger.info("ERROR: Update OI records not matching {0} {1} {2} to {3}", ticker, prev_date.strftime('%m/%d/%Y'), pre_count, post_count)
 
-            print("{0} | Prev OI Uploaded| {1} - {2} total_OI | {3} - {4} total_OI".format(ticker, prev_date.strftime('%m/%d/%Y'),df_prev['open_interest'].sum(),dataDate, df_prev['open_interest_new'].sum()))
-            logger.info("{0} | Prev OI Uploaded| {1} - {2} total_OI | {3} - {4} total_OI".format(ticker, prev_date.strftime('%m/%d/%Y'),df_prev['open_interest'].sum(),dataDate, df_prev['open_interest_new'].sum()))
+            prev_end = time.time()
+            print("{0} | Prev OI Uploaded| {1} - {2} total_OI | {3} - {4} total_OI| Time: {5}".format(ticker, prev_date.strftime('%m/%d/%Y'),df_prev['open_interest'].sum(),dataDate, df_prev['open_interest_new'].sum(),prev_end-prev_start))
+            logger.info("{0} | Prev OI Uploaded| {1} - {2} total_OI | {3} - {4} total_OI| Time: {5}".format(ticker, prev_date.strftime('%m/%d/%Y'),df_prev['open_interest'].sum(),dataDate, df_prev['open_interest_new'].sum(),prev_end-prev_start))
 
 
         except Exception as e:
@@ -577,7 +630,7 @@ class DataLoader():
         ticker = df['symbol'].iloc[0]
         connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
         exists = connection_options.execute("select count(*) from option_data where symbol = '{0}' and date = '{1}'".format(ticker, dataDate)).fetchone()[0]
-
+        upload_start = time.time()
 
         if (exists > 0):
             print("Data already exist: Skip Data Upload. {0} {1}: {2} Records. ".format(ticker, dataDate, exists))
@@ -595,8 +648,9 @@ class DataLoader():
                     print("ERROR: Data Upload: {0} {1}: {2} recs; Pre: {3} Post {4}; Dif: {5}".format(dataDate, ticker, len(df), pre_count, post_count, post_count - pre_count))
                     logger.info("ERROR: Data Upload: {0} {1}: {2} recs; Pre: {3} Post {4}; Dif: {5}".format(dataDate, ticker, len(df), pre_count, post_count, post_count - pre_count))
                 else:
-                    print("{0} option_data| {1} | {2} Add".format(ticker, dataDate, len(df)))
-                    logger.info("{0} option_data| {1} | {2} Add".format(ticker, dataDate, len(df)))
+                    upload_end = time.time()
+                    print("{0} option_data| {1} | {2} Add | {3}".format(ticker, dataDate, len(df),upload_end-upload_start))
+                    logger.info("{0} option_data| {1} | {2} Add | {3}".format(ticker, dataDate, len(df),upload_end-upload_start))
 
             except Exception as e:
                 print("ERROR: Data Upload ", ticker, dataDate, len(df), e)
@@ -608,6 +662,7 @@ class DataLoader():
     def uploadOptionStat(self, dataDate, df):
         ticker = df['symbol'].iloc[0]
         stats = OptionStats(ticker, dataDate, df).result
+        upload_start = time.time()
 
         connection_stats = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
         exists = connection_stats.execute("select exists(select * from option_stat where symbol = '{0}' and date = '{1}')".format(ticker, dataDate.strftime('%Y-%m-%d'))).fetchone()[0]
@@ -620,8 +675,9 @@ class DataLoader():
             stats.to_sql('option_stat', connection_stats, if_exists='append', index=False)
             post_count = connection_stats.execute("select count(*) from option_stat where symbol = '{0}'".format(ticker)).fetchone()[0]
 
-            print("{0} option_stat| {1}| {2} Add".format(ticker, dataDate, len(stats)))
-            logger.info("{0} option_stat| {1}| {2} Add".format(ticker, dataDate, len(stats)))
+            upload_end = time.time()
+            print("{0} option_stat| {1}| {2} Add | {3}".format(ticker, dataDate, len(stats),upload_end-upload_start))
+            logger.info("{0} option_stat| {1}| {2} Add | {3}".format(ticker, dataDate, len(stats),upload_end-upload_start))
 
         except Exception as e:
             print(e)
@@ -660,11 +716,11 @@ class DataLoader():
     def terminateConnections(self):
         commands = ("""SELECT pg_terminate_backend(pg_stat_activity.pid)
                     FROM pg_stat_activity
-                    WHERE datname = 'wz_options'
+                    WHERE datname = 'wzyy_options'
                     AND pid <> pg_backend_pid();
                 """)
         try:
-            conn = psycopg2.connect("dbname = 'wz_options' user='postgres' host = 'localhost' password = 'inkstain'")
+            conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
             cur = conn.cursor()
             cur.execute(commands)
             cur.close()
@@ -679,8 +735,31 @@ class DataLoader():
 
 if __name__ == '__main__':
 
+    # existingTickers.fetchAllPrices(existingTickers)
+
+
+    # filenames = ["20180716_OData.csv", "20180717_OData.csv", "20180718_OData.csv", "20180719_OData.csv", "20180720_OData.csv"]
+    # filenames += ["20180723_OData.csv", "20180724_OData.csv", "20180725_OData.csv", "20180726_OData.csv", "20180727_OData.csv"]
+    # # filenames = ["20180725_OData.csv"]
+
+    filenames = ["20180102_OData.csv", "20180103_OData.csv", "20180104_OData.csv"]
+    filenames = ['20180727_OData.csv']
+
+    # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
 
     files = os.listdir(DATA_PATH)
+    csvfiles = [fi for fi in files if (fi.endswith(".csv") and fi.startswith("2018"))]
+
+
+#######  INPUTS   ###########################################################################################################
+
+    ticker = ['TPX']
+    process_files = csvfiles
+
+#####################################################################################################################
+    process = psutil.Process(os.getpid())
+    print("Start MEM: ", (process.memory_info().rss / 1048576), "MB")
+
     try:
         dataError_File = 'Data_Errors.csv'
         dataHole_File = 'Data_Holes.csv'
@@ -693,33 +772,25 @@ if __name__ == '__main__':
     except Exception as e:
         print(e)
 
-    csvfiles = [fi for fi in files if (fi.endswith(".csv") and fi.startswith("2018"))]
-
-
-    filenames = ["20180716_OData.csv", "20180717_OData.csv", "20180718_OData.csv", "20180719_OData.csv", "20180720_OData.csv"]
-    filenames += ["20180723_OData.csv", "20180724_OData.csv", "20180725_OData.csv", "20180726_OData.csv", "20180727_OData.csv"]
-    # filenames = ["20180725_OData.csv"]
-
-    filenames = ["20180102_OData.csv", "20180103_OData.csv", "20180104_OData.csv"]
-
-    # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
-    ticker = []
-
-    process = psutil.Process(os.getpid())
-    print("Start MEM: ", (process.memory_info().rss / 1048576), "MB")
     i = 0
-    for filename in csvfiles:
-        if filename[:6]=='201806':
-            i += 1
-            print("Loading {0} {1}/{2}".format(filename, i, len(csvfiles)))
-            DataLoader().loadOptionsHistorical(filename, ticker)
-            if i >30:
-                break
+    DataLoader.removeIndex(DataLoader)
+    try:
+        for filename in csvfiles:
+            if filename[:4]=='2018':
+                i += 1
+                print("Loading {0} {1}/{2}".format(filename, i, len(csvfiles)))
+                DataLoader().loadOptionsHistorical(filename, ticker)
 
-        gc.collect()
-        process = psutil.Process(os.getpid())
-    #        print(objgraph.show_most_common_types())
-    print("END - PROCESSED {0} Files and {1} tickers".format(len(filenames), len(ticker)))
+            gc.collect()
+            process = psutil.Process(os.getpid())
+            DataLoader.terminateConnections(DataLoader)
+    except Exception as e:
+        print("Process Files: ERROR | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),e))
+        info.logger("Process Files: ERROR | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),e))
+
+    DataLoader.addIndex(DataLoader)
+    print("Process Files: SUCCESS | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files), e))
+    info.logger("Process Files: SUCCESS | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files), e))
 
 
 

@@ -23,7 +23,8 @@ from functools import reduce
 import pandas_datareader.data as web
 from pandas.util.testing import assert_frame_equal
 from alphaVantageAPI.alphavantage import AlphaVantage
-
+import time
+import string
 
 
 # ts = TimeSeries(key='PR2GF4AKJDDZ10XJ', output_format='pandas')
@@ -44,7 +45,43 @@ from alphaVantageAPI.alphavantage import AlphaVantage
 # df_final.to_csv("MSFT_Flags.csv")
 # print("CSV Exported")
 
+class existingTickers():
+    def all(self):
+        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        cur = conn.cursor()
+        cur.execute("select symbol from ticker_log where end_date is null order by symbol asc")
+        fetched = cur.fetchall()
+        tickers = [x[0] for x in fetched]
+        cur.close()
+        conn.close()
+        return tickers
+
+    def fetchAllPrices(self):
+        tickers = self.all(self)
+        connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+        for ticker in tickers:
+            start_char = string.ascii_lowercase.index('h')
+            ticker_char = string.ascii_lowercase.index(ticker.lower()[0])
+            if start_char > ticker_char:
+                continue
+            try:
+                underlying_exists = connection_options.execute("SELECT exists( select * FROM underlying_data where symbol = '{0}')".format(ticker)).fetchone()[0]
+                if not underlying_exists:
+                    print("{0} Exists = {1}| Fetch Prices".format(ticker, underlying_exists))
+                    DataManager.fetchUnderlyingMS(DataManager(), ticker, date_length='full')
+                    time.sleep(5)
+                else:
+                    print("{0} Exists".format(ticker))
+            except Exception as e:
+                print("Fetch All Prices ERROR | ",ticker, e)
+                connection_options.dispose()
+        connection_options.dispose()
+
+
+
 class DataManager():
+
 
     def calculateMA(self, df):
         df.sort_index(inplace=True)
@@ -60,6 +97,7 @@ class DataManager():
         # start = date - timedelta(days=10)
         # # newstart = date = timedelta(days = (365 * 5))
         # newstart = datetime(end.year - 5, 1, 1)
+
         pd.options.mode.chained_assignment = None
 
         connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
@@ -78,7 +116,10 @@ class DataManager():
     #     ms.to_csv("{0}_underlying_raw_test.csv".format(ticker))
 
         av = AlphaVantage(
-            api_key='PR2GF4AKJDDZ10XJ',
+            # PR2GF4AKJDDZ10XJ
+            # TRKZ63X4EOAAL204
+            # VCYRAHVIILTDWPFQ
+            api_key='VCYRAHVIILTDWPFQ',
             output_size=date_length,
             datatype='json',
             export=False,
@@ -88,7 +129,16 @@ class DataManager():
             proxy={}
         )
         print("Fetching Prices for {0} - {1}".format(ticker, date_length))
-        ms = av.data(symbol=ticker, function='D')
+        av_start = time.time()
+        try:
+            ms = av.data(symbol=ticker, function='D')
+
+        except Exception as e:
+            print("AlphaVantage Fetch Price: ERROR| ",ticker)
+            # ADD sleep timer to not over query right away when error
+            connection.dispose()
+            return
+        av_end = time.time()
         ms.reset_index(inplace=True)
         ms_rename = {"datetime":"date", "1. open":"open","2. high":"high","3. low":"low","4. close":"close","5. volume":"volume"}
         ms.rename(columns=ms_rename, inplace=True)
@@ -114,7 +164,7 @@ class DataManager():
         ms_exist = ms[ms.index.isin(df.index)]
         df_exist = df[df.index.isin(ms.index)]
 
-        print(ticker, "DB:", len(df), " Query:", len(ms), " NEW:", len(ms_new))
+        print(ticker, "DB:", len(df), " Query:", len(ms), " NEW:", len(ms_new), " Query Time: ",av_end-av_start)
 
         #  Check existing price data to see if it matches
         if len(ms_exist) > 0:
@@ -147,8 +197,15 @@ class DataManager():
                 df_upload.reset_index(inplace=True)
                 df_upload['date'] = pd.to_datetime(df_upload['date'], format='%Y-%m-%d').dt.date
                 # df_upload.to_csv("{0}_underlying_test.csv".format(ticker))
+                process_start = time.time()
                 df_upload.to_sql('underlying_data', connection, if_exists='append', index=False)
-                print("{0}| Update {1} prices".format(ticker, len(ms_new)))
+                process_end = time.time()
+                print("{0}| Update {1} prices {2} to {3}. Process Time: {4}".format(ticker, len(ms_new),df_upload['date'].min(),df_upload['date'].max(),process_end-process_start))
+
+                result = connection.execute("select count(DISTINCT symbol) from underlying_data")
+                ticker_count = result.fetchone()[0]
+                print("Total Tickers: ",ticker_count)
+
                 # print(df_upload.reset_index().head())
             except Exception as e:
                 print("Error Update New Price {0} {1} Records, Last {2}".format(ticker, len(ms_new), e))
@@ -156,6 +213,7 @@ class DataManager():
         # else:
         # print("NO NEW PRICE. {0} {1} Last: DB: {2} Query: {3}".format(ticker, date.strftime('%Y-%m-%d'), df.index.max().strftime('%Y-%m-%d'), ms.index.max().strftime('%Y-%m-%d')))
         connection.dispose()
+
 
 # conn= create_engine('postgresql://postgres:inkstain@localhost:5432/wz_info')
 #
@@ -174,6 +232,15 @@ class DataManager():
 #        conn.dispose()
 if __name__ == '__main__':
 
-    dm = DataManager()
-    test = dm.fetchUnderlyingMS("AAAP", date_length='full')
-#
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    try:
+        connection.execute("DROP INDEX IF EXISTS underlying_symbol_index;")
+    finally:
+        dm = DataManager()
+        # test = dm.fetchUnderlyingMS("IWM", date_length='full')
+        existingTickers.fetchAllPrices(existingTickers)
+
+        connection.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")
+        connection.dispose()
+
+    # test = dm.fetchUnderlyingMS("AAAP")
