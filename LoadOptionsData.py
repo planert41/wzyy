@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 if not len(logger.handlers):
     formatter = logging.Formatter('%(asctime)s %(filename)s: %(funcName)s: %(message)s')
     logger.setLevel(logging.DEBUG)
-    fh = logging.FileHandler('Load_Option_' + today.strftime('%y%m%d') + '.log', mode='w')
+    fh = logging.FileHandler('Load_Option_' + today + '.log', mode='w')
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
@@ -85,7 +85,7 @@ class DataLoader():
 
     def checkTickerTables(self, df):
         #  Check Tickers
-        existing_tickers = existingTickers().all()
+        existing_tickers = existingTickers().all(option="all")
         dataDate = df['date'].max()
         checkTicker_start = time.time()
 
@@ -334,18 +334,18 @@ class DataLoader():
         connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
 
         try:
-            connection_info.execute("DROP IF EXISTS INDEX option_data_index;")
-            connection_info.execute("DROP IF EXISTS INDEX option_stat_index;")
-            connection_info.execute("DROP IF EXISTS INDEX underlying_data_index;")
-            connection_info.execute("DROP IF EXISTS INDEX option_flag_index;")
-            connection_info.execute("DROP IF EXISTS INDEX process_log_ticker_index;")
+            connection_info.execute("DROP INDEX IF EXISTS option_data_index;")
+            connection_info.execute("DROP INDEX IF EXISTS option_stat_index;")
+            connection_info.execute("DROP INDEX IF EXISTS underlying_data_index;")
+            connection_info.execute("DROP INDEX IF EXISTS option_flag_index;")
+            connection_info.execute("DROP INDEX IF EXISTS process_log_ticker_index;")
 
         except Exception as e:
             print("Index Add ERROR: ", e)
         finally:
             connection_info.dispose()
             index_end = time.time()
-            print("Remove Option Data |", index_end - index_start)
+            print("Remove Index |", index_end - index_start)
 
     def addIndex(self):
         index_start = time.time()
@@ -736,14 +736,14 @@ class DataLoader():
 if __name__ == '__main__':
 
     # existingTickers.fetchAllPrices(existingTickers)
-
+    timestart = time.time()
 
     # filenames = ["20180716_OData.csv", "20180717_OData.csv", "20180718_OData.csv", "20180719_OData.csv", "20180720_OData.csv"]
     # filenames += ["20180723_OData.csv", "20180724_OData.csv", "20180725_OData.csv", "20180726_OData.csv", "20180727_OData.csv"]
     # # filenames = ["20180725_OData.csv"]
 
     filenames = ["20180102_OData.csv", "20180103_OData.csv", "20180104_OData.csv"]
-    filenames = ['20180727_OData.csv']
+    filenames = ['20180725_OData.csv']
 
     # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
 
@@ -753,8 +753,8 @@ if __name__ == '__main__':
 
 #######  INPUTS   ###########################################################################################################
 
-    ticker = ['TPX']
-    process_files = csvfiles
+    ticker = []
+    process_files = filenames
 
 #####################################################################################################################
     process = psutil.Process(os.getpid())
@@ -775,7 +775,7 @@ if __name__ == '__main__':
     i = 0
     DataLoader.removeIndex(DataLoader)
     try:
-        for filename in csvfiles:
+        for filename in process_files:
             if filename[:4]=='2018':
                 i += 1
                 print("Loading {0} {1}/{2}".format(filename, i, len(csvfiles)))
@@ -786,11 +786,13 @@ if __name__ == '__main__':
             DataLoader.terminateConnections(DataLoader)
     except Exception as e:
         print("Process Files: ERROR | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),e))
-        info.logger("Process Files: ERROR | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),e))
+        logger.info("Process Files: ERROR | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),e))
 
     DataLoader.addIndex(DataLoader)
-    print("Process Files: SUCCESS | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files), e))
-    info.logger("Process Files: SUCCESS | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files), e))
+    timeend = time.time()
+
+    print("Process Files: SUCCESS | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),timeend-timestart))
+    logger.info("Process Files: SUCCESS | {0} - {1} | {2} Files | {3}".format(process_files[0], process_files[-1], len(process_files),timeend-timestart))
 
 
 

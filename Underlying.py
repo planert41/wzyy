@@ -46,10 +46,13 @@ import string
 # print("CSV Exported")
 
 class existingTickers():
-    def all(self):
+    def all(self, option="active"):
         conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
-        cur.execute("select symbol from ticker_log where end_date is null order by symbol asc")
+        if option  == "active":
+            cur.execute("select symbol from ticker_log where end_date is null order by symbol asc")
+        else:
+            cur.execute("select symbol from ticker_log order by symbol asc")
         fetched = cur.fetchall()
         tickers = [x[0] for x in fetched]
         cur.close()
@@ -78,16 +81,52 @@ class existingTickers():
                 connection_options.dispose()
         connection_options.dispose()
 
+    def update(self):
+        tickers = self.all(self)
+        connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+        for ticker in tickers:
+            request = "SELECT * FROM underlying_data where symbol = '{0}' ORDER BY date DESC;".format(ticker)
+            df = pd.read_sql_query(request, con=connection_options)
+
+            if len(df) == 0:
+                print("Skipping ",ticker)
+                continue
+
+            df.set_index(pd.DatetimeIndex(df['date']), inplace=True)
+            df.drop('date', axis=1, inplace=True)
+            df.sort_index(ascending=False, inplace=True)
+
+            df['high_52w'] = df['close'].rolling(window=250).max()
+            df['low_52w'] = df['close'].rolling(window=250).min()
+            df['sma_50'] = round(df['close'].rolling(window=50).mean(), 2)
+
+            df.reset_index(inplace=True)
+            df['date'] = pd.to_datetime(df['date'], format='%Y-%m-%d').dt.date
+
+            connection_options.execute("delete from underlying_data where symbol = '{0}'".format(ticker))
+            df.to_sql('underlying_data', connection_options, if_exists='append', index=False)
+            print("Updated {0} | {1} Prices | {2} high/lows".format(ticker, len(df), df['high_52w'].count(), df['low_52w'].count()))
+
+        connection_options.dispose()
 
 
 class DataManager():
+
+
+
 
 
     def calculateMA(self, df):
         df.sort_index(inplace=True)
         df['sma_200'] = round(df['close'].rolling(window=200).mean(), 2)
         df['sma_100'] = round(df['close'].rolling(window=100).mean(), 2)
+        df['sma_50'] = round(df['close'].rolling(window=50).mean(), 2)
         df['ema_8'] = round(df['close'].ewm(span=8, adjust=False).mean(), 2)
+
+        df['high_52w'] = df['close'].rolling(window=250).max()
+        df['low_52w'] = df['close'].rolling(window=250).min()
+
         print("{0}| {1} Prices| {2} SMA-200| {3} 100-SMA:{3}| {4} EMA-8".format(df['symbol'][0], len(df), df['sma_200'].count(), df['sma_100'].count(), df['ema_8'].count()))
         return df
 
@@ -109,6 +148,7 @@ class DataManager():
         df.set_index(pd.DatetimeIndex(df['date']), inplace=True)
         # df.set_index((df['date']), inplace=True)
         df.drop('date', axis=1, inplace=True)
+
 
     # WEB QUERY STOCK DATA UP TO 5 YEARS
     #     ms = web.DataReader(ticker, 'morningstar', newstart, end).xs(ticker)
@@ -232,12 +272,14 @@ class DataManager():
 #        conn.dispose()
 if __name__ == '__main__':
 
+    # existingTickers.update(existingTickers)
+
     connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
     try:
         connection.execute("DROP INDEX IF EXISTS underlying_symbol_index;")
     finally:
         dm = DataManager()
-        # test = dm.fetchUnderlyingMS("IWM", date_length='full')
+        # test = dm.fetchUnderlyingMS("KS", date_length='full')
         existingTickers.fetchAllPrices(existingTickers)
 
         connection.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")

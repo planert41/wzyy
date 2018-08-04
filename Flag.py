@@ -18,6 +18,7 @@ import psycopg2
 from sqlalchemy import create_engine
 import time
 from scipy import stats
+from pandas import DataFrame
 
 
 class Stat:
@@ -69,7 +70,7 @@ class Flag:
         else:
             return "WK"
 
-    def unusual_screen(self, tickers, date=None, days=1):
+    def unusual_screen(self, tickers =[], date=None, days=1):
 
 
     # Function defaults to screening ticker for today - 1 Day
@@ -224,10 +225,61 @@ class Flag:
         flag_end = time.time()
         print("Flag Complete : {0} Tickers | {1} | {2} | {3} Flags | {4}".format(len(tickers), date, days, total_flags, flag_end - flag_start))
 
+    def analyze(self, tickers = []):
+        conn = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+        try:
+            request = "SELECT * FROM option_flag ORDER BY symbol, date ASC;"
+            df_flags = pd.read_sql_query(request, con=conn)
+
+            if len(tickers) > 0:
+                df_flags = df_flags[df_flags["symbol"].isin(tickers)]
+            print("Analyze Flags: Read Flags | {0} Tickers | {1} Flags".format(df_flags['symbol'].nunique(),len(df_flags)))
+
+        except Exception as e:
+            print("Analyze Flags: Read Flags Error")
+
+
+        if len(df_flags) == 0:
+            return
+
+        df_flags = df_flags.groupby("symbol")
+
+        for symbol, flags in df_flags:
+            symbol_min_date = flags['date'].min()
+            symbol_max_date = flags['option_expiration'].max()
+            print(symbol, symbol_min_date, symbol_max_date)
+
+            flag_merge = flags[['date','call_put']]
+            flag_merge.set_index(pd.DatetimeIndex(df_price['date']), inplace=True)
+
+            request = "SELECT * FROM underlying_data where symbol = '{0}' and date >= '{1}' and date <= '{2}'".format(symbol, symbol_min_date, symbol_max_date)
+            df_price = pd.read_sql_query(request, con=conn)
+            df_price.set_index(pd.DatetimeIndex(df_price['date']), inplace=True)
+
+            df_price = pd.merge(df_price, flag_merge, on='date', how='left')
+
+            print("{0} | {1} to {2} | {3} Prices".format(symbol, symbol_min_date, symbol_max_date, len(df_price)))
+            # print(df_price.info())
+            print(df_price.head())
+
+            for flag in flags.itertuples():
+                print(flag.option_symbol)
+
+                request = "SELECT * FROM option_data where option_symbol ='{0}'".format(flag.option_symbol)
+                flag_price = pd.read_sql_query(request, con=conn)
+
+                flag_price['mid'] = flag_price.apply(lambda x: x['last'] if x['bid'] <= x['last'] <= x['ask'] else (x['bid'] + x['ask'])/2, axis=1)
+
+
+
+        conn.dispose()
+
+
 
 if __name__ == '__main__':
     ticker = ["GME", 'TPX', 'TROX', 'AAPL', 'JAG', 'BBBY', 'QCOM', 'FDC', 'BLL', 'XRT']
     ticker = ['TPX']
 
     fl = Flag()
-    fl.unusual_screen(ticker, days=0)
+    # fl.unusual_screen(ticker, days=0)
+    fl.analyze()
