@@ -47,24 +47,28 @@ import string
 
 class existingTickers():
     def all(self, option="active"):
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
-        cur = conn.cursor()
-        if option  == "active":
-            cur.execute("select symbol from ticker_log where end_date is null order by symbol asc")
+        connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+        if option == "active":
+            request = "select * from ticker_log where end_date is null order by symbol asc"
         else:
-            cur.execute("select symbol from ticker_log order by symbol asc")
-        fetched = cur.fetchall()
-        tickers = [x[0] for x in fetched]
-        cur.close()
-        conn.close()
+            request = "select * from ticker_log order by symbol asc"
+
+        tickers = pd.read_sql_query(request, con=connection_options)
+        print("Existing Tickers Query | {0} | {1} Recs".format(option, len(tickers)))
+
+        # tickers = [x[0] for x in fetched]
+        connection_options.dispose()
         return tickers
 
     def fetchAllPrices(self):
-        tickers = self.all(self)
+        tickers_data = self.all(self, option="active")
+        tickers = tickers_data['symbol']
         connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+        start_char = string.ascii_lowercase.index('u')
 
         for ticker in tickers:
-            start_char = string.ascii_lowercase.index('h')
+
             ticker_char = string.ascii_lowercase.index(ticker.lower()[0])
             if start_char > ticker_char:
                 continue
@@ -82,11 +86,12 @@ class existingTickers():
         connection_options.dispose()
 
     def update(self):
-        tickers = self.all(self)
+        tickers_info = self.all(self, option='all')
+        tickers = tickers_info['symbol']
         connection_options = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
-
+        i = 0
         for ticker in tickers:
-            request = "SELECT * FROM underlying_data where symbol = '{0}' ORDER BY date DESC;".format(ticker)
+            request = "SELECT * FROM underlying_data where symbol = '{0}' ORDER BY date ASC;".format(ticker)
             df = pd.read_sql_query(request, con=connection_options)
 
             if len(df) == 0:
@@ -95,7 +100,7 @@ class existingTickers():
 
             df.set_index(pd.DatetimeIndex(df['date']), inplace=True)
             df.drop('date', axis=1, inplace=True)
-            df.sort_index(ascending=False, inplace=True)
+            df.sort_index(ascending=True, inplace=True)
 
             df['high_52w'] = df['close'].rolling(window=250).max()
             df['low_52w'] = df['close'].rolling(window=250).min()
@@ -106,14 +111,13 @@ class existingTickers():
 
             connection_options.execute("delete from underlying_data where symbol = '{0}'".format(ticker))
             df.to_sql('underlying_data', connection_options, if_exists='append', index=False)
-            print("Updated {0} | {1} Prices | {2} high/lows".format(ticker, len(df), df['high_52w'].count(), df['low_52w'].count()))
+            i+=1
+            print("Updated {0} | {1} Prices | {2} high/lows | {3}/{4}".format(ticker, len(df), df['high_52w'].count(), i, len(tickers)))
 
         connection_options.dispose()
 
 
 class DataManager():
-
-
 
 
 
@@ -137,6 +141,8 @@ class DataManager():
         # # newstart = date = timedelta(days = (365 * 5))
         # newstart = datetime(end.year - 5, 1, 1)
 
+        start_date = datetime(2005, 1, 1).date()
+
         pd.options.mode.chained_assignment = None
 
         connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
@@ -159,7 +165,7 @@ class DataManager():
             # PR2GF4AKJDDZ10XJ
             # TRKZ63X4EOAAL204
             # VCYRAHVIILTDWPFQ
-            api_key='VCYRAHVIILTDWPFQ',
+            api_key='PR2GF4AKJDDZ10XJ',
             output_size=date_length,
             datatype='json',
             export=False,
@@ -235,6 +241,7 @@ class DataManager():
 
             try:
                 df_upload.reset_index(inplace=True)
+                df_upload = df_upload[df_upload['date'].dt.date >= start_date]
                 df_upload['date'] = pd.to_datetime(df_upload['date'], format='%Y-%m-%d').dt.date
                 # df_upload.to_csv("{0}_underlying_test.csv".format(ticker))
                 process_start = time.time()
@@ -242,9 +249,12 @@ class DataManager():
                 process_end = time.time()
                 print("{0}| Update {1} prices {2} to {3}. Process Time: {4}".format(ticker, len(ms_new),df_upload['date'].min(),df_upload['date'].max(),process_end-process_start))
 
-                result = connection.execute("select count(DISTINCT symbol) from underlying_data")
-                ticker_count = result.fetchone()[0]
-                print("Total Tickers: ",ticker_count)
+                # count_start = time.time()
+                # result = connection.execute("select count(DISTINCT symbol) from underlying_data")
+                # ticker_count = result.fetchone()[0]
+                # count_end = time.time()
+
+                # print("Total Tickers: ",ticker_count, count_end - count_start)
 
                 # print(df_upload.reset_index().head())
             except Exception as e:
@@ -274,15 +284,18 @@ if __name__ == '__main__':
 
     # existingTickers.update(existingTickers)
 
-    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
-    try:
-        connection.execute("DROP INDEX IF EXISTS underlying_symbol_index;")
-    finally:
-        dm = DataManager()
-        # test = dm.fetchUnderlyingMS("KS", date_length='full')
-        existingTickers.fetchAllPrices(existingTickers)
 
-        connection.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")
+    # try:
+        # connection.execute("DROP INDEX IF EXISTS underlying_symbol_index;")
+    # finally:
+        connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+        dm = DataManager()
+        # test = dm.fetchUnderlyingMS("XRT", date_length='full')
+        # existingTickers.fetchAllPrices(existingTickers)
+        existingTickers.update(existingTickers)
+
+
+        # connection.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")
         connection.dispose()
 
     # test = dm.fetchUnderlyingMS("AAAP")

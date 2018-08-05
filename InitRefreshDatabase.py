@@ -351,14 +351,12 @@ def createProcessLogTicker():
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
-        cur.execute("CREATE INDEX process_log_ticker_index ON process_log_ticker(symbol, source_date);")
-
         exists = cur.fetchall()[0][0]
 
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (source_date, symbol)".format(tableName))
-
+            cur.execute("CREATE INDEX process_log_ticker_index ON process_log_ticker(symbol, source_date);")
             cur.close()
             conn.commit()
             print("Create {0} Init".format(tableName))
@@ -521,12 +519,13 @@ def createAll():
 def dropAllTables():
     conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
     cur = conn.cursor()
-    tableNames = ["option_data", "option_stat", "option_flag", "process_log",'process_log_ticker']
+    tableNames = ["option_data", "option_stat", "process_log",'process_log_ticker']
     # KEEPING UNDERLYING DATA
 
     try:
         for table in tableNames:
             cur.execute("drop table if exists {0}".format(table))
+            print("Dropped ", table)
 
         conn.commit()
         cur.close()
@@ -582,11 +581,11 @@ def clearAll():
 
 if __name__ == '__main__':
     #
-    # dropAllTables()
+    dropAllTables()
     # # clearAll()
-    # createAll()
+    createAll()
 
-    createOptionFlagInit()
+    # createOptionFlagInit()
 
 
     # clearFilesForDate('2018-07-23')

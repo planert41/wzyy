@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 import time
 from scipy import stats
 from pandas import DataFrame
+import operator
 
 
 class Stat:
@@ -91,7 +92,8 @@ class Flag:
 
     # LOOP THROUGH TICKERS
 
-        for ticker_inp in np.nditer(tickers):
+        for ticker_inp in tickers:
+            print(ticker_inp)
 
             if days == 0:
                 days = conn.execute("select count(*) from option_stat where symbol = '{0}'".format(ticker_inp)).fetchone()[0]
@@ -225,53 +227,166 @@ class Flag:
         flag_end = time.time()
         print("Flag Complete : {0} Tickers | {1} | {2} | {3} Flags | {4}".format(len(tickers), date, days, total_flags, flag_end - flag_start))
 
+
+######################################################################################################################
+
+
     def analyze(self, tickers = []):
         conn = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+        count = 0
+
+    # READ IN ALL FLAGS
         try:
-            request = "SELECT * FROM option_flag ORDER BY symbol, date ASC;"
+            request = "SELECT * FROM option_flag ORDER BY symbol, date asc;"
             df_flags = pd.read_sql_query(request, con=conn)
+            df_flags['call_ind'] = df_flags.apply(lambda x: 1 if x['call_put'] == 'C' else 0, axis=1)
+            df_flags['put_ind'] = df_flags.apply(lambda x: 1 if x['call_put'] == 'P' else 0, axis=1)
 
             if len(tickers) > 0:
                 df_flags = df_flags[df_flags["symbol"].isin(tickers)]
             print("Analyze Flags: Read Flags | {0} Tickers | {1} Flags".format(df_flags['symbol'].nunique(),len(df_flags)))
 
         except Exception as e:
-            print("Analyze Flags: Read Flags Error")
-
+            print("Analyze Flags: Read Flags Error ", e)
 
         if len(df_flags) == 0:
             return
 
-        df_flags = df_flags.groupby("symbol")
+     # SEPARATE FLAGS BASED ON TICKER
 
-        for symbol, flags in df_flags:
+        temp_df_flags = df_flags.groupby("symbol", as_index=False)
+        df_flags['date'] = df_flags['date'].apply(lambda x: dt.datetime.strftime(x, '%Y-%m-%d'))
+
+
+        tuples = list(zip(df_flags['option_symbol'],df_flags['date']))
+        index = pd.MultiIndex.from_tuples(tuples, names=['first', 'second'])
+        flag_stats = DataFrame(columns=[], index=index)
+        # print(flag_stats.info())
+        # print(flag_stats)
+        # print("Index Test ", flag_stats.loc[('AAPL  180316P00155000', '2018-02-09')])
+
+        for symbol, flags in temp_df_flags:
             symbol_min_date = flags['date'].min()
             symbol_max_date = flags['option_expiration'].max()
-            print(symbol, symbol_min_date, symbol_max_date)
+            # print(symbol, symbol_min_date, symbol_max_date)
 
-            flag_merge = flags[['date','call_put']]
-            flag_merge.set_index(pd.DatetimeIndex(df_price['date']), inplace=True)
+            # flag_merge.set_index(pd.DatetimeIndex(flag_merge['date']), inplace=True)
+            # flag_merge.drop('date', axis=1, inplace=True)
 
-            request = "SELECT * FROM underlying_data where symbol = '{0}' and date >= '{1}' and date <= '{2}'".format(symbol, symbol_min_date, symbol_max_date)
+            # READ IN UNDERLYING PRICE  FROM FLAG DATE TO OPTION EXPIRY
+            request = "SELECT * FROM underlying_data where symbol = '{0}' and date >= '{1}' and date <= '{2}' order by date asc".format(symbol, symbol_min_date, symbol_max_date)
             df_price = pd.read_sql_query(request, con=conn)
-            df_price.set_index(pd.DatetimeIndex(df_price['date']), inplace=True)
+            if len(df_price) ==0:
+                print("Read Price Error: No Price Data For ", symbol)
+            # print("Read OCHL Prices | {0} | {1} Recs".format(symbol, len(df_price)))
+
+            # df_price.set_index(pd.DatetimeIndex(df_price['date']), inplace=True)
+            # df_price.drop('date', axis=1, inplace=True)
+
+        # MERGE IN ALL FLAGS INTO PRICE DATA
+            pm = len(df_price)
+            # flag_merge = flags[['date','call_ind','put_ind']].copy()
+            # Handles days with multiple flags, calls and puts
+            flag_merge = flags.groupby(['date'])[["call_ind", "put_ind"]].sum()
 
             df_price = pd.merge(df_price, flag_merge, on='date', how='left')
+            am = len(df_price)
+            if (am != pm):
+                print("Flag - Price Merge Error | {0} | {1} to {2}".format(symbol, pm, am))
 
-            print("{0} | {1} to {2} | {3} Prices".format(symbol, symbol_min_date, symbol_max_date, len(df_price)))
+            # print("Merge Prices | {0} | {1} to {2} | {3} Prices".format(symbol, symbol_min_date, symbol_max_date, len(df_price)))
             # print(df_price.info())
-            print(df_price.head())
+            # print(df_price.head())
 
+        # READ IN INDIVIDUAL OPTION DATA
             for flag in flags.itertuples():
-                print(flag.option_symbol)
-
-                request = "SELECT * FROM option_data where option_symbol ='{0}'".format(flag.option_symbol)
+                # flag_date = flag.date.strftime('%Y-%m-%d')
+                flag_date = flag.date
+                request = "SELECT * FROM option_data where option_symbol ='{0}' and date >= '{1}' order by date asc".format(flag.option_symbol, flag.date)
                 flag_price = pd.read_sql_query(request, con=conn)
+                # print('Read Option Prices | {0} | {1}'.format(flag.option_symbol, len(flag_price)))
 
                 flag_price['mid'] = flag_price.apply(lambda x: x['last'] if x['bid'] <= x['last'] <= x['ask'] else (x['bid'] + x['ask'])/2, axis=1)
+                # flag_price.set_index(pd.DatetimeIndex(flag_price['date']), inplace=True)
+                # flag_price.drop('date', axis=1, inplace=True)
 
+                # print(flag_price.info())
+                # print(df_price.info())
 
+            # MERGE FLAG OPTION DATA WITH OCHL PRICE DATA
+                pm = len(flag_price)
+                flag_price = pd.merge(flag_price, df_price, on='date', how='left')
+                am = len(flag_price)
+                if (am != pm):
+                    print("Ind Flag - Price Merge Error | {0} | {1} to {2}".format(flag.option_symbol, pm, am))
+                # print("Option and OCHL Merged | {0} | {1}".format(flag.option_symbol, len(flag_price)))
 
+            # FILL OUT OPTION FLAG DETAILS
+                index, value = max(enumerate(flag_price['open']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'open_high'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'open_high_date'] = flag_price['date'].loc[index]
+
+                index, value = min(enumerate(flag_price['open']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'open_low'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'open_low_date'] = flag_price['date'].loc[index]
+
+                index, value = max(enumerate(flag_price['close']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'close_high'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'close_high_date'] = flag_price['date'].loc[index]
+
+                index, value = min(enumerate(flag_price['close']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'close_low'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'close_low_date'] = flag_price['date'].loc[index]
+
+                index, value = max(enumerate(flag_price['high']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'max_high'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'max_high_date'] = flag_price['date'].loc[index]
+
+                index, value = min(enumerate(flag_price['low']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'min_low'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'min_low_date'] = flag_price['date'].loc[index]
+
+                index, value = max(enumerate(flag_price['last']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'opt_last_high'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'opt_last_high_date'] = flag_price['date'].loc[index]
+
+                index, value = max(enumerate(flag_price['mid']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'opt_mid_high'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'opt_mid_high_date'] = flag_price['date'].loc[index]
+
+                # print(flag_price)
+                max_ret_date = flag_price['date'].loc[index]
+                # print(max_ret_date)
+
+                flag_prehigh = flag_price[flag_price['date'] <= max_ret_date]
+                # print(flag_prehigh)
+
+                index, value = min(enumerate(flag_prehigh['mid']), key=operator.itemgetter(1))
+                flag_stats.loc[(flag.option_symbol,flag_date),'opt_mid_drawdown'] = value
+                flag_stats.loc[(flag.option_symbol,flag_date),'opt_mid_drawdown_date'] = flag_price['date'].loc[index]
+
+                if flag.call_put == 'C':
+                    index, value = min(enumerate(flag_prehigh['low']), key=operator.itemgetter(1))
+                    flag_stats.loc[(flag.option_symbol,flag_date), 'max_drawdown'] = value
+                    flag_stats.loc[(flag.option_symbol,flag_date), 'max_drawdown_date'] = flag_price['date'].loc[index]
+                elif flag.call_put == 'P':
+                    index, value = max(enumerate(flag_prehigh['high']), key=operator.itemgetter(1))
+                    flag_stats.loc[(flag.option_symbol,flag_date), 'max_drawdown'] = value
+                    flag_stats.loc[(flag.option_symbol,flag_date), 'max_drawdown_date'] = flag_price['date'].loc[index]
+
+                count += 1
+                print("Processed | {0} | {1}/{2}".format(flag.option_symbol, count, len(df_flags)))
+        # print(flag_stats)
+        flag_stats.index.names = ['option_symbol','date']
+        # flag_stats.reset_index(inplace=True)
+        pm = len(df_flags)
+        df_flags = pd.merge(df_flags, flag_stats, on=['option_symbol','date'], how='left')
+        am = len(df_flags)
+        if (am != pm):
+            print("Final Flag - Stats Merge Error | {0} | {1} to {2}".format(flag.option_symbol, pm, am))
+
+        df_flags.to_csv('flag_analyze.csv')
+        print("Finish Analyzing Flags | {0} Tickers | {1} Flags".format(df_flags['symbol'].nunique(), len(df_flags)))
         conn.dispose()
 
 
@@ -279,6 +394,7 @@ class Flag:
 if __name__ == '__main__':
     ticker = ["GME", 'TPX', 'TROX', 'AAPL', 'JAG', 'BBBY', 'QCOM', 'FDC', 'BLL', 'XRT']
     ticker = ['TPX']
+    ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
 
     fl = Flag()
     # fl.unusual_screen(ticker, days=0)
