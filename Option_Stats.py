@@ -61,7 +61,7 @@ class OptionStats():
 
     def summarize(self):
 
-        df = self.data
+        df = self.data.copy()
         cur_date = self.date
 
         fields = ['category', 'call_put', 'volume', 'open_interest']

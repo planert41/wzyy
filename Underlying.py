@@ -55,7 +55,7 @@ class existingTickers():
             request = "select * from ticker_log order by symbol asc"
 
         tickers = pd.read_sql_query(request, con=connection_options)
-        print("Existing Tickers Query | {0} | {1} Recs".format(option, len(tickers)))
+        # print("Existing Tickers Query | {0} | {1} Recs".format(option, len(tickers)))
 
         # tickers = [x[0] for x in fetched]
         connection_options.dispose()

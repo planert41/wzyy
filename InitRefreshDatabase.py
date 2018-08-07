@@ -201,6 +201,25 @@ def createUnderlyingInit():
 def createOptionFlagInit():
     tableName = 'option_flag'
 
+    stat_col = ['open_high', 'open_high_date', 'open_low', 'open_low_date', 'close_high', 'close_high_date', 'close_low', 'close_low_date']
+    stat_col += ['max_high', 'max_high_date', 'min_low', 'min_low_date', 'opt_last_high', 'opt_last_high_date', 'opt_mid_high', 'opt_mid_high_date']
+    stat_col += ['opt_mid_drawdown_bmax', 'opt_mid_drawdown_bmax_date', 'max_drawdown_bmax', 'max_drawdown_bmax_date', 'hit_itm_mid', 'hit_itm_date', 'close_itm_mid', 'close_itm_date']
+    stat_col += ['close_sma200_mid', 'close_sma200_date', 'close_sma100_mid', 'close_sma100_date', 'close_sma50_mid', 'close_sma50_date', 'close_ema8_mid', 'close_ema8_date']
+    stat_col += ['high_52w_mid', 'high_52w_date', 'low_52w_mid', 'low_52w_date']
+    stat_col += ['opt_n50ret_mid', 'opt_n50ret_date', 'opt_p100ret_mid', 'opt_p100ret_date', 'opt_p200ret_mid', 'opt_p200ret_date']
+    stat_col += ['stock_p5ret_mid', 'stock_p5ret_date', 'stock_p10ret_mid', 'stock_p10ret_date', 'stock_n5ret_mid', 'stock_n5ret_date', 'stock_n10ret_mid', 'stock_n10ret_date']
+    stat_col += ['addflag_call_mid', 'addflag_call_mid_date', 'addflag_put_mid', 'addflag_put_mid_date']
+
+    setup_text = ""
+
+    for stat in stat_col:
+        if 'date' in stat:
+            setup_text += """{0} date,
+            """.format(stat)
+        else:
+            setup_text += """{0} numeric(10,4),
+            """.format(stat)
+
     commands = (
         """
         CREATE TABLE {0} (
@@ -255,11 +274,20 @@ def createOptionFlagInit():
         largest_vol_std_adj numeric(10,4),
         
         largest_5dayoi_mean_adj numeric(10,4),
-        largest_5dayoi_vol_adj numeric(10,4)
+        largest_5dayoi_vol_adj numeric(10,4),
         
+        {1}
         
+        call_ind integer,
+        put_ind integer,
+        
+        call_flag integer,
+        call_flag_dates varchar,
+        
+        put_flag integer,
+        put_flag_dates varchar
         )
-        """.format(tableName))
+        """.format(tableName,setup_text))
 
     try:
         conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
@@ -300,7 +328,15 @@ def createProcessLog():
         source_file varchar,
         date timestamp with time zone,  
         record_count integer,
-        ticker_count int
+        ticker_count int,
+        prev_oi_update timestamp with time zone,
+        prev_oi_update_file varchar,
+        prev_5day_oi_update timestamp with time zone,
+        prev_5day_oi_update_file varchar,
+        upload_date timestamp with time zone,  
+        stat_date timestamp with time zone,
+        flag_date timestamp with time zone,
+        process_time numeric(10,2)
         )
         """.format(tableName))
 
@@ -342,7 +378,9 @@ def createProcessLogTicker():
         prev_5day_oi_update timestamp with time zone,
         prev_5day_oi_update_file varchar,
         stat_date timestamp with time zone,
-        flag_date timestamp with time zone
+        flag_date timestamp with time zone,
+        process_time numeric(10,2)
+
         )
         """.format(tableName))
 
@@ -365,6 +403,20 @@ def createProcessLogTicker():
     finally:
         if conn is not None:
             conn.close()
+
+def refreshTickerLog(date):
+    connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    command = """
+        UPDATE
+            ticker_log
+        SET
+            end_date = null
+        WHERE
+            end_date = '{0}'
+    """.format(date)
+
+    connection_info.execute(command)
+    connection_info.dispose()
 
 def createTickerLog():
     tableName = 'ticker_log'
@@ -520,6 +572,7 @@ def dropAllTables():
     conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
     cur = conn.cursor()
     tableNames = ["option_data", "option_stat", "process_log",'process_log_ticker']
+    # tableNames = ["process_log"]
     # KEEPING UNDERLYING DATA
 
     try:
@@ -581,7 +634,7 @@ def clearAll():
 
 if __name__ == '__main__':
     #
-    dropAllTables()
+    # dropAllTables()
     # # clearAll()
     createAll()
 
