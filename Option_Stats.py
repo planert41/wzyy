@@ -29,7 +29,7 @@ class OptionStats():
 
         self.date = date
         self.symbol = symbol
-        self.stock_price = data['stock_price']
+        self.stock_price = data['stock_price'].iloc[0]
 
         self.total_call_vol = None
         self.total_put_vol = None
@@ -61,13 +61,14 @@ class OptionStats():
 
     def summarize(self):
 
-        df = self.data.copy()
-        cur_date = self.date
+        data_cols = ['option_symbol','option_expiration','call_put', 'volume', 'open_interest','open_interest_change','open_interest_5day_change']
 
-        fields = ['category', 'call_put', 'volume', 'open_interest']
+        df = self.data[data_cols]
+        cur_date = self.date
 
         df['category'] = df['option_expiration'].apply(lambda x: self.option_category(x, cur_date))
 
+        fields = ['category', 'call_put', 'volume', 'open_interest']
         df_total = df.groupby(['call_put'])[fields].sum().reset_index()
         #        print("DF_TOTAL: ",df_total[df_total['call_put']=='C']['volume'].sum())
 
@@ -76,9 +77,9 @@ class OptionStats():
 
         result = DataFrame(columns=[], index=[cur_date])
 
-        result['date'] = cur_date
-        result['symbol'] = df['symbol'].iloc[0]
-        result['stock_price'] = df['stock_price'].iloc[0]
+        result['date'] = self.date
+        result['symbol'] = self.symbol
+        result['stock_price'] = self.stock_price
 
         result['total_call_vol'] = df_total[df_total['call_put'] == 'C']['volume'].sum()
         result['total_put_vol'] = df_total[df_total['call_put'] == 'P']['volume'].sum()
@@ -99,10 +100,11 @@ class OptionStats():
         df_max = sorted(zip(df['volume'], df['open_interest'], df['call_put'], df['option_symbol']), reverse=True)[:3]
 
         # print("DF_MAX: ",df_max)
-        result['max_opt_1_vol'] = df_max[0][0]
-        result['max_opt_1_oi'] = df_max[0][1]
-        result['max_opt_1_call_put'] = df_max[0][2]
-        result['max_opt_1_option'] = df_max[0][3]
+        if len(df_max)>0:
+            result['max_opt_1_vol'] = df_max[0][0]
+            result['max_opt_1_oi'] = df_max[0][1]
+            result['max_opt_1_call_put'] = df_max[0][2]
+            result['max_opt_1_option'] = df_max[0][3]
         if len(df_max)>1:
             result['max_opt_2_vol'] = df_max[1][0]
             result['max_opt_2_oi'] = df_max[1][1]
@@ -116,11 +118,12 @@ class OptionStats():
             result['max_opt_3_option'] = df_max[2][3]
         if 'open_interest_5day_change' in df.columns:
             df_max_5day = sorted(zip(df['open_interest_5day_change'], df['option_symbol']), reverse=True)[:3]
-            result['max_5day_oi_1_change'] = df_max_5day[0][0]
-            result['max_5day_oi_1_option'] = df_max_5day[0][1]
-
-            result['max_5day_oi_2_change'] = df_max_5day[1][0]
-            result['max_5day_oi_2_option'] = df_max_5day[1][1]
+            if len(df_max_5day) > 0:
+                result['max_5day_oi_1_change'] = df_max_5day[0][0]
+                result['max_5day_oi_1_option'] = df_max_5day[0][1]
+            if len(df_max_5day) > 1:
+                result['max_5day_oi_2_change'] = df_max_5day[1][0]
+                result['max_5day_oi_2_option'] = df_max_5day[1][1]
 
         return result
 

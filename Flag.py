@@ -271,15 +271,21 @@ class Flag:
         stat_col+= ['max_high', 'max_high_date', 'min_low', 'min_low_date', 'opt_last_high', 'opt_last_high_date', 'opt_mid_high', 'opt_mid_high_date']
         stat_col+= ['opt_mid_drawdown_bmax', 'opt_mid_drawdown_bmax_date', 'max_drawdown_bmax', 'max_drawdown_bmax_date', 'hit_itm_mid', 'hit_itm_date', 'close_itm_mid', 'close_itm_date']
         stat_col+= ['close_sma200_mid','close_sma200_date','close_sma100_mid','close_sma100_date','close_sma50_mid','close_sma50_date','close_ema8_mid','close_ema8_date']
-        stat_col+= ['high_52w_mid','high_52w_date','low_52w_mid','low_52w_date']
+        stat_col+= ['high_52w_mid','high_52w_date','low_52w_mid','low_52w_date','high_100d_mid','high_100d_date','low_30d_mid','low_30d_date']
         stat_col+= ['opt_n50ret_mid','opt_n50ret_date','opt_p100ret_mid','opt_p100ret_date','opt_p200ret_mid','opt_p200ret_date']
         stat_col+= ['stock_p5ret_mid','stock_p5ret_date','stock_p10ret_mid','stock_p10ret_date','stock_n5ret_mid','stock_n5ret_date','stock_n10ret_mid','stock_n10ret_date']
         stat_col+= ['addflag_call_mid','addflag_call_mid_date','addflag_put_mid','addflag_put_mid_date']
-
+        stat_col += ['OI_n50pct_mid','OI_n50pct_mid_date','OI_n90pct_mid','OI_n90pct_mid_date']
         stat_col+= ['call_flag', 'call_flag_dates', 'put_flag', 'put_flag_dates']
+        stat_col+= ['etf']
 
         flag_stats = DataFrame(columns=stat_col, index=index)
         print(flag_stats)
+
+
+    # READ IN ETF DATA
+        request = "SELECT * FROM etf_data"
+        df_etf = pd.read_sql_query(request, con=conn)
 
 
         flag_stat_cols = []
@@ -293,6 +299,8 @@ class Flag:
         temp_df_flags = df_flags.groupby("symbol", as_index=False)
 
         for symbol, flags in temp_df_flags:
+
+        # WE GROUP ALL THE FLAGS WITH THE SAME TICKER, AND READ IN ALL THE UNDERLYING DATA, BEFORE ANALYZING INDIVIDUAL FLAG RETURN STATISTICS
             symbol_min_date = flags['date'].min()
             symbol_max_date = flags['option_expiration'].max()
             print("Processing | {0} | {1} to {2} | {3} CALLS {4} PUTS".format(symbol, symbol_min_date, symbol_max_date, flags['call_ind'].sum(),flags['put_ind'].sum()))
@@ -300,7 +308,7 @@ class Flag:
             # flag_merge.set_index(pd.DatetimeIndex(flag_merge['date']), inplace=True)
             # flag_merge.drop('date', axis=1, inplace=True)
 
-            # READ IN UNDERLYING DATA FROM FLAG DATE TO OPTION EXPIRY
+        # READ IN UNDERLYING DATA FROM FLAG DATE TO OPTION EXPIRY
             request = "SELECT * FROM underlying_data where symbol = '{0}' and date >= '{1}' and date <= '{2}' order by date asc".format(symbol, symbol_min_date, symbol_max_date)
             df_price = pd.read_sql_query(request, con=conn)
             if len(df_price) ==0:
@@ -310,7 +318,7 @@ class Flag:
             # df_price.set_index(pd.DatetimeIndex(df_price['date']), inplace=True)
             # df_price.drop('date', axis=1, inplace=True)
 
-        # MERGE FLAG_IND WITH UNDERLYING PRICE DATA
+        # CALCULATE TOTAL FLAG_IND FOR EACH UNDERLYING PRICE DAY
             pm = len(df_price)
             # flag_merge = flags[['date','call_ind','put_ind']].copy()
             # Handles days with multiple flags, calls and puts
@@ -324,18 +332,49 @@ class Flag:
             df_price['call_ind'].fillna(0)
             df_price['put_ind'].fillna(0)
 
-
             am = len(df_price)
             if (am != pm):
                 print("Flag - Price Merge Error | {0} | {1} to {2}".format(symbol, pm, am))
 
-        # READ FLAG OPTION DAILY DATA
+
+        # READ IN SHORT DATA
+            short_fields = ['short_int', 'short_float','short_day_cover','insider_own_pct','institution_own_pct','sector','industry']
+            request = "SELECT {0} FROM short_data where symbol = '{1}'' order by date desc".format(short_fields.append("date"), symbol)
+            df_short = pd.read_sql_query(request, con=conn)
+            df.rename(columns={"date":"short_date"}, inplace=True)
+
+            if len(df_short) == 0:
+                print("Read Short Interest Error: No Short Interest Data For ", symbol)
+                # print("Read OCHL Prices | {0} | {1} Recs".format(symbol, len(df_price)))
+
+        # FORMAT SHORT DATA FOR BLANKS
+            df_short['shares_float'] = df_short['shares_float'].interpolate()
+            df_short['shares_float'].bfill(inplace=True)
+            df_short['shares_float'] = df_short['shares_float'].apply(lambda x: int(x))
+
+            df_short['short_float'] = (df_short['short_int']/df_short['shares_float'])*100
+            df_short['short_float'].bfill(inplace=True)
+
+            df_short['insider_own_pct'].ffill(inplace=True)
+            df_short['insider_own_pct'].bfill(inplace=True)
+            df_short['institution_own_pct'].ffill(inplace=True)
+            df_short['institution_own_pct'].bfill(inplace=True)
+
             for flag in flags.itertuples():
 
                 # flag_date = flag.date.strftime('%Y-%m-%d')
                 flag_s = flag.option_symbol
                 flag_date = flag.date
                 flag_strike = flag.strike
+
+            # CHECK IF ETF
+                flag_stats.loc[(flag_s,flag_date),'etf'] = 1 if flag.symbol in df_etf['etf_symbol'].values else 0
+
+
+            # ADD SHORT INTEREST DATA
+                flag_stats.loc[(flag.option_symbol,flag_date),short_fields.append("short_date")] = df_short[df_short['short_date'] <= flag_date].iloc[0]
+
+            # READ FLAG OPTION DAILY DATA
                 request = "SELECT * FROM option_data where option_symbol ='{0}' and date >= '{1}' order by date asc".format(flag.option_symbol, flag.date)
                 flag_price = pd.read_sql_query(request, con=conn)
                 # print('Read Option Prices | {0} | {1}'.format(flag.option_symbol, len(flag_price)))
@@ -361,52 +400,67 @@ class Flag:
             # FILL OUT OPTION FLAG DETAILS
             #     print(flag_price.info())
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['open_high','open_high_date']] = self.flag_stat_minmax(flag_price,"max","open")
-                flag_stats.loc[(flag.option_symbol,flag_date),['open_low','open_low_date']] = self.flag_stat_minmax(flag_price,"min","open")
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_high','close_high_date']] = self.flag_stat_minmax(flag_price,"max","close")
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_low','close_low_date']] = self.flag_stat_minmax(flag_price,"min","close")
-                flag_stats.loc[(flag.option_symbol,flag_date),['max_high','max_high_date']] = self.flag_stat_minmax(flag_price,"max","high")
-                flag_stats.loc[(flag.option_symbol,flag_date),['min_low','min_low_date']] = self.flag_stat_minmax(flag_price,"min","low")
+                flag_stats.loc[(flag_s,flag_date),['open_high','open_high_date']] = self.flag_stat_minmax(flag_price,"max","open")
+                flag_stats.loc[(flag_s,flag_date),['open_low','open_low_date']] = self.flag_stat_minmax(flag_price,"min","open")
+                flag_stats.loc[(flag_s,flag_date),['close_high','close_high_date']] = self.flag_stat_minmax(flag_price,"max","close")
+                flag_stats.loc[(flag_s,flag_date),['close_low','close_low_date']] = self.flag_stat_minmax(flag_price,"min","close")
+                flag_stats.loc[(flag_s,flag_date),['max_high','max_high_date']] = self.flag_stat_minmax(flag_price,"max","high")
+                flag_stats.loc[(flag_s,flag_date),['min_low','min_low_date']] = self.flag_stat_minmax(flag_price,"min","low")
 
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['opt_last_high','opt_last_high_date']] = self.flag_stat_minmax(flag_price,"max","last")
-                flag_stats.loc[(flag.option_symbol,flag_date),['opt_mid_high','opt_mid_high_date']] = self.flag_stat_minmax(flag_price,"max","mid")
+                flag_stats.loc[(flag_s,flag_date),['opt_last_high','opt_last_high_date']] = self.flag_stat_minmax(flag_price,"max","last")
+                flag_stats.loc[(flag_s,flag_date),['opt_mid_high','opt_mid_high_date']] = self.flag_stat_minmax(flag_price,"max","mid")
 
                 max_ret_date = flag_stats.loc[(flag.option_symbol,flag_date),'opt_mid_high_date']
                 flag_prehigh = flag_price[flag_price['date'] <= max_ret_date]
                 flag_stats.loc[(flag.option_symbol,flag_date),['opt_mid_drawdown_bmax','opt_mid_drawdown_bmax_date']] = self.flag_stat_minmax(flag_prehigh,"min","mid")
 
                 if flag.call_put == 'C':
-                    flag_stats.loc[(flag.option_symbol, flag_date), ['max_drawdown_bmax', 'max_drawdown_bmax_date']] = self.flag_stat_minmax(flag_prehigh, "min", "low")
+                    flag_stats.loc[(flag_s, flag_date), ['max_drawdown_bmax', 'max_drawdown_bmax_date']] = self.flag_stat_minmax(flag_prehigh, "min", "low")
                 elif flag.call_put == 'P':
-                    flag_stats.loc[(flag.option_symbol, flag_date), ['max_drawdown_bmax', 'max_drawdown_bmax_date']] = self.flag_stat_minmax(flag_prehigh, "max", "high")
+                    flag_stats.loc[(flag_s, flag_date), ['max_drawdown_bmax', 'max_drawdown_bmax_date']] = self.flag_stat_minmax(flag_prehigh, "max", "high")
 
                 # print('test')
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['hit_itm_mid','hit_itm_date']] = self.flag_stat_ITM(flag_price, flag.call_put,flag.strike,"touch","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_itm_mid','close_itm_date']] = self.flag_stat_ITM(flag_price, flag.call_put,flag.strike,"close","mid")
+            # OPTION MID PRICE - WHEN STOCK TOUCHES ITM
+                flag_stats.loc[(flag_s,flag_date),['hit_itm_mid','hit_itm_date']] = self.flag_stat_ITM(flag_price, flag.call_put,flag.strike,"touch","mid")
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_sma200_mid','close_sma200_date']] = self.flag_stat_touch(flag_price,"sma_200","close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_sma100_mid','close_sma100_date']] = self.flag_stat_touch(flag_price,"sma_100","close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_sma50_mid','close_sma50_date']] = self.flag_stat_touch(flag_price,"sma_50","close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['close_ema8_mid','close_ema8_date']] = self.flag_stat_touch(flag_price,"ema_8","close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['high_52w_mid','high_52w_date']] = self.flag_stat_touch(flag_price,"high_52w","high","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['low_52w_mid','low_52w_date']] = self.flag_stat_touch(flag_price,"low_52w","low","mid")
+            # OPTION MID PRICE - WHEN STOCK CLOSES ITM
+                flag_stats.loc[(flag_s,flag_date),['close_itm_mid','close_itm_date']] = self.flag_stat_ITM(flag_price, flag.call_put,flag.strike,"close","mid")
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['opt_n50ret_mid','opt_n50ret_date']] = self.flag_stat_return(flag_price,-0.5,"ask","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['opt_p100ret_mid','opt_p100ret_date']] = self.flag_stat_return(flag_price,1,"ask","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['opt_p200ret_mid','opt_p200ret_date']] = self.flag_stat_return(flag_price,2,"ask","mid")
+            # OPTION MID PRICE - WHEN STOCK CLOSES ABOVE/BELOW KEY MA
+                flag_stats.loc[(flag_s,flag_date),['close_sma200_mid','close_sma200_date']] = self.flag_stat_touch(flag_price,"sma_200","close","mid")
+                flag_stats.loc[(flag_s,flag_date),['close_sma100_mid','close_sma100_date']] = self.flag_stat_touch(flag_price,"sma_100","close","mid")
+                flag_stats.loc[(flag_s,flag_date),['close_sma50_mid','close_sma50_date']] = self.flag_stat_touch(flag_price,"sma_50","close","mid")
+                flag_stats.loc[(flag_s,flag_date),['close_ema8_mid','close_ema8_date']] = self.flag_stat_touch(flag_price,"ema_8","close","mid")
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['stock_p5ret_mid','stock_p5ret_date']] = self.flag_stat_return(flag_price,0.05,"close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['stock_p10ret_mid','stock_p10ret_date']] = self.flag_stat_return(flag_price,0.1,"close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['stock_n5ret_mid','stock_n5ret_date']] = self.flag_stat_return(flag_price,-0.05,"close","mid")
-                flag_stats.loc[(flag.option_symbol,flag_date),['stock_n10ret_mid','stock_n10ret_date']] = self.flag_stat_return(flag_price,-0.1,"close","mid")
+            # OPTION MID PRICE - WHEN STOCK TOUCHES TIME RANGE HIGH/LOWS (HIGH OF DAY MAKES NEW RANGE HIGH, LOW OF DAY MAKE NEW RANGE LOW)
+                flag_stats.loc[(flag_s,flag_date),['high_52w_mid','high_52w_date']] = self.flag_stat_touch(flag_price,"high_52w","high","mid")
+                flag_stats.loc[(flag_s,flag_date),['low_52w_mid','low_52w_date']] = self.flag_stat_touch(flag_price,"low_52w","low","mid")
+                flag_stats.loc[(flag_s,flag_date),['high_100d_mid','high_100d_date']] = self.flag_stat_touch(flag_price,"high_100d","high","mid")
+                flag_stats.loc[(flag_s,flag_date),['low_100d_mid','low_100d_date']] = self.flag_stat_touch(flag_price,"low_100d","low","mid")
+                flag_stats.loc[(flag_s,flag_date),['high_30d_mid','high_30d_date']] = self.flag_stat_touch(flag_price,"high_30d","high","mid")
+                flag_stats.loc[(flag_s,flag_date),['low_30d_mid','low_30d_date']] = self.flag_stat_touch(flag_price,"low_30d","low","mid")
 
-                flag_stats.loc[(flag.option_symbol,flag_date),['addflag_call_mid','addflag_call_mid_date']] = self.flag_stat_add_flag(flag_price, 'C', 'mid')
-                flag_stats.loc[(flag.option_symbol,flag_date),['addflag_put_mid','addflag_put_mid_date']] = self.flag_stat_add_flag(flag_price, 'P', 'mid')
+            # OPTION MID PRICE - WHEN OPTION PRICE CLOSES ABOVE/BELOW PERCENTAGE OF ASK PRICE FROM FLAG DAY (CLOSING OPT GAIN/LOSS TRIGGER)
+                flag_stats.loc[(flag_s,flag_date),['opt_n50ret_mid','opt_n50ret_date']] = self.flag_stat_return(flag_price,-0.5,"ask","mid")
+                flag_stats.loc[(flag_s,flag_date),['opt_p100ret_mid','opt_p100ret_date']] = self.flag_stat_return(flag_price,1,"ask","mid")
+                flag_stats.loc[(flag_s,flag_date),['opt_p200ret_mid','opt_p200ret_date']] = self.flag_stat_return(flag_price,2,"ask","mid")
+
+            # OPTION MID PRICE - WHEN STOCK PRICE CLOSES ABOVE/BELOW PERCENTAGE OF CLOSING STOCK PRICE FROM FLAG DAY
+                flag_stats.loc[(flag_s,flag_date),['stock_p5ret_mid','stock_p5ret_date']] = self.flag_stat_return(flag_price,0.05,"close","mid")
+                flag_stats.loc[(flag_s,flag_date),['stock_p10ret_mid','stock_p10ret_date']] = self.flag_stat_return(flag_price,0.1,"close","mid")
+                flag_stats.loc[(flag_s,flag_date),['stock_n5ret_mid','stock_n5ret_date']] = self.flag_stat_return(flag_price,-0.05,"close","mid")
+                flag_stats.loc[(flag_s,flag_date),['stock_n10ret_mid','stock_n10ret_date']] = self.flag_stat_return(flag_price,-0.1,"close","mid")
+
+            # OPTION MID PRICE - WHEN ANOTHER CALL/PUT FLAG IS FLAGGED AFTER INIT FLAG DAY
+                flag_stats.loc[(flag_s,flag_date),['addflag_call_mid','addflag_call_mid_date']] = self.flag_stat_add_flag(flag_price, 'C', 'mid')
+                flag_stats.loc[(flag_s,flag_date),['addflag_put_mid','addflag_put_mid_date']] = self.flag_stat_add_flag(flag_price, 'P', 'mid')
                 print('test')
 
-
+            # OPTION MID PRICE - WHEN OI CHANGES BY % of ORIGINAL FLAG VOL, MIN OF 250
+                flag_stats.loc[(flag_s,flag_date),['OI_n50pct_mid','OI_n50pct_mid_date']] = self.flag_stat_OI_change(flag_price, flag.open_interest_change, -0.5, 'mid')
+                flag_stats.loc[(flag_s,flag_date),['OI_n90pct_mid','OI_n90pct_mid_date']] = self.flag_stat_OI_change(flag_price, flag.open_interest_change, -0.9, 'mid')
 
 
 
@@ -615,6 +669,24 @@ class Flag:
                 return [None, None]
         except Exception as e:
             print("flag_stat_return Error: | {0} {1} | {2}".format(df_price['option_symbol'].iloc[0], df_price['date'].iloc[0], min_ret + ref_field + output_field))
+            return [None, None]
+
+    def flag_stat_OI_change(self, df_price, OI_change, OI_change_pct, output_field):
+
+        min_OI_change = max(250, abs(OI_change * OI_change_pct))
+
+        try:
+            if OI_change_pct < 0:
+                df_price_filter = df_price[df_price["open_interest_change"] <= -min_OI_change & df_price['volume'] >= min_OI_change]
+            elif OI_change_pct > 0:
+                df_price_filter = df_price[df_price["open_interest_change"] >= min_OI_change & df_price['volume'] >= min_OI_change]
+
+            if len(df_price_filter) > 0:
+                return [df_price_filter[output_field].iloc[0], df_price_filter['date'].iloc[0]]
+            else:
+                return [None, None]
+        except Exception as e:
+            print("flag_stat_return Error: | {0} {1} | {2}".format(df_price['option_symbol'].iloc[0], df_price['date'].iloc[0], OI_change + " " + OI_change_pct))
             return [None, None]
 
     def flag_stat_add_flag(self, df_price, flag, output_field):

@@ -56,6 +56,8 @@ class existingTickers():
 
         tickers = pd.read_sql_query(request, con=connection_options)
         # print("Existing Tickers Query | {0} | {1} Recs".format(option, len(tickers)))
+        tickers['start_date'] = pd.to_datetime(tickers['start_date']).dt.date
+        tickers['end_date'] = pd.to_datetime(tickers['end_date']).dt.date
 
         # tickers = [x[0] for x in fetched]
         connection_options.dispose()
@@ -104,7 +106,15 @@ class existingTickers():
 
             df['high_52w'] = df['close'].rolling(window=250).max()
             df['low_52w'] = df['close'].rolling(window=250).min()
+
+            df['high_100d'] = df['close'].rolling(window=100).max()
+            df['low_100d'] = df['close'].rolling(window=100).min()
+
+            df['high_30d'] = df['close'].rolling(window=30).max()
+            df['low_30d'] = df['close'].rolling(window=30).min()
+
             df['sma_50'] = round(df['close'].rolling(window=50).mean(), 2)
+
 
             df.reset_index(inplace=True)
             df['date'] = pd.to_datetime(df['date'], format='%Y-%m-%d').dt.date
@@ -117,8 +127,24 @@ class existingTickers():
         connection_options.dispose()
 
 
+file_data_path = 'C:\\Users\\Yaos\\Desktop\\Trading\\OptionsData\\'
+
 class DataManager():
 
+    def loadETF(self):
+        df_ETF = pd.read_csv(file_data_path + 'ETF_data.csv', encoding='ISO-8859-1', na_values=['#NAME?', 'NaN', 'Infinity', '-Infinity'])
+        connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+        try:
+            df_ETF.to_sql('etf_data', connection, if_exists='append', index=False)
+            print("Uploaded etf_data| {0} Recs".format(len(df_ETF)))
+
+        except Exception as e:
+            print("ERROR etf_data")
+            raise
+
+        finally:
+            connection.dispose()
 
 
     def calculateMA(self, df):
@@ -130,6 +156,14 @@ class DataManager():
 
         df['high_52w'] = df['close'].rolling(window=250).max()
         df['low_52w'] = df['close'].rolling(window=250).min()
+
+        df['high_100d'] = df['close'].rolling(window=100).max()
+        df['low_100d'] = df['close'].rolling(window=100).min()
+
+        df['high_30d'] = df['close'].rolling(window=30).max()
+        df['low_30d'] = df['close'].rolling(window=30).min()
+
+
 
         print("{0}| {1} Prices| {2} SMA-200| {3} 100-SMA:{3}| {4} EMA-8".format(df['symbol'][0], len(df), df['sma_200'].count(), df['sma_100'].count(), df['ema_8'].count()))
         return df
@@ -290,10 +324,10 @@ if __name__ == '__main__':
     # finally:
         connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
         dm = DataManager()
-        # test = dm.fetchUnderlyingMS("XRT", date_length='full')
+        # test = dm.fetchUnderlyingMS("TUBE", date_length='full')
         # existingTickers.fetchAllPrices(existingTickers)
         existingTickers.update(existingTickers)
-
+        # dm.loadETF()
 
         # connection.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")
         connection.dispose()

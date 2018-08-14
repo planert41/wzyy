@@ -51,7 +51,7 @@ def createOptionsInit():
         )
         """.format(tableName))
     try:
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -60,8 +60,9 @@ def createOptionsInit():
 
         if (not exists):
             cur.execute(commands)
-            cur.execute("alter table {0} add unique (option_symbol , date)".format(tableName))
-            cur.execute("CREATE INDEX option_data_index ON option_data(symbol, option_symbol, date);")
+            # cur.execute("alter table {0} add unique (date, option_symbol)".format(tableName))
+            # cur.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(date, symbol);")
+            # cur.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(date, option_symbol );")
 
             cur.close()
             conn.commit()
@@ -128,7 +129,7 @@ def createOptionsStatInit():
         )
         """.format(tableName))
     try:
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -138,7 +139,7 @@ def createOptionsStatInit():
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (date , symbol)".format(tableName))
-            cur.execute("CREATE INDEX option_stat_index ON option_stat (symbol, date);")
+            cur.execute("CREATE INDEX option_stat_index ON option_stat (date, symbol);")
 
             cur.close()
             conn.commit()
@@ -152,6 +153,39 @@ def createOptionsStatInit():
         if conn is not None:
             conn.close()
 
+
+def createETFdataInit():
+    tableName = 'etf_data'
+
+    commands = (
+        """
+        CREATE TABLE {0} (
+        etf_name varchar,
+        etf_symbol varchar
+        )
+        """.format(tableName))
+    try:
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        cur = conn.cursor()
+
+        cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
+        exists = cur.fetchall()[0][0]
+
+        if (not exists):
+            cur.execute(commands)
+
+            cur.close()
+            conn.commit()
+            print("Create {0} Init".format(tableName))
+
+        else:
+            print("Table {0} Already Exists".format(tableName))
+
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
 
 def createUnderlyingInit():
     tableName = 'underlying_data'
@@ -172,7 +206,7 @@ def createUnderlyingInit():
         )
         """.format(tableName))
     try:
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -205,10 +239,15 @@ def createOptionFlagInit():
     stat_col += ['max_high', 'max_high_date', 'min_low', 'min_low_date', 'opt_last_high', 'opt_last_high_date', 'opt_mid_high', 'opt_mid_high_date']
     stat_col += ['opt_mid_drawdown_bmax', 'opt_mid_drawdown_bmax_date', 'max_drawdown_bmax', 'max_drawdown_bmax_date', 'hit_itm_mid', 'hit_itm_date', 'close_itm_mid', 'close_itm_date']
     stat_col += ['close_sma200_mid', 'close_sma200_date', 'close_sma100_mid', 'close_sma100_date', 'close_sma50_mid', 'close_sma50_date', 'close_ema8_mid', 'close_ema8_date']
-    stat_col += ['high_52w_mid', 'high_52w_date', 'low_52w_mid', 'low_52w_date']
+    stat_col += ['high_52w_mid', 'high_52w_date', 'low_52w_mid', 'low_52w_date', 'high_100d_mid', 'high_100d_date', 'low_30d_mid', 'low_30d_date']
     stat_col += ['opt_n50ret_mid', 'opt_n50ret_date', 'opt_p100ret_mid', 'opt_p100ret_date', 'opt_p200ret_mid', 'opt_p200ret_date']
     stat_col += ['stock_p5ret_mid', 'stock_p5ret_date', 'stock_p10ret_mid', 'stock_p10ret_date', 'stock_n5ret_mid', 'stock_n5ret_date', 'stock_n10ret_mid', 'stock_n10ret_date']
     stat_col += ['addflag_call_mid', 'addflag_call_mid_date', 'addflag_put_mid', 'addflag_put_mid_date']
+    stat_col += ['OI_n50pct_mid', 'OI_n50pct_mid_date', 'OI_n90pct_mid', 'OI_n90pct_mid_date']
+
+
+
+
 
     setup_text = ""
 
@@ -285,12 +324,23 @@ def createOptionFlagInit():
         call_flag_dates varchar,
         
         put_flag integer,
-        put_flag_dates varchar
+        put_flag_dates varchar,
+        
+        short_date date,
+        short_int bigint,
+        short_day_cover numeric(10,2),
+        short_float numeric(10,2),
+        insider_own_pct numeric(10,2),
+        institution_own_pct numeric(10,2),
+        sector varchar,
+        industry varchar,
+        etf integer
+        
         )
         """.format(tableName,setup_text))
 
     try:
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -331,6 +381,8 @@ def createProcessLog():
         ticker_count int,
         prev_oi_update timestamp with time zone,
         prev_oi_update_file varchar,
+        prev_oi_data_hole_rec_count int,
+        prev_oi_data_hole_ticker_count int,
         prev_5day_oi_update timestamp with time zone,
         prev_5day_oi_update_file varchar,
         upload_date timestamp with time zone,  
@@ -341,7 +393,7 @@ def createProcessLog():
         """.format(tableName))
 
     try:
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -385,7 +437,7 @@ def createProcessLogTicker():
         """.format(tableName))
 
     try:
-        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -442,6 +494,54 @@ def createTickerLog():
         if (not exists):
             cur.execute(commands)
             cur.execute("alter table {0} add unique (symbol)".format(tableName))
+
+            cur.close()
+            conn.commit()
+            print("Create {0} Init".format(tableName))
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def createShortInt():
+    tableName = 'short_data'
+
+    commands = (
+        """
+        CREATE TABLE {0} (
+        date date,
+        symbol varchar,
+        name varchar,
+        short_int bigint,
+        short_day_cover numeric(10,2),
+        short_float numeric(10,2),
+        short_int_prior bigint,
+        short_change_pct numeric(10,2),
+        avg_daily_vol bigint,
+        shares_float bigint,
+        shares_outstanding bigint,
+        insider_own_pct numeric(10,2),
+        institution_own_pct numeric(10,2),
+        price numeric(10,2),
+        market_cap  bigint,
+        sector varchar,
+        industry varchar
+        )
+        """.format(tableName))
+
+    try:
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        cur = conn.cursor()
+
+        cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
+
+        exists = cur.fetchall()[0][0]
+
+        if (not exists):
+            cur.execute(commands)
+            cur.execute("alter table {0} add unique (date, symbol)".format(tableName))
 
             cur.close()
             conn.commit()
@@ -566,6 +666,8 @@ def createAll():
     createProcessLog()
     createProcessLogTicker()
     createTickerLog()
+    createShortInt()
+    createETFdataInit()
     print("CREATE ALL - FINISH")
 
 def dropAllTables():
@@ -592,12 +694,17 @@ def dropAllTables():
 
 def clearFilesForDate(date):
 
+    print("Deleting ",date)
     conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
     cur = conn.cursor()
 
     cur.execute("Delete From option_data where date='{0}'".format(date))
+    print("option_data | Deleted | ",date)
     cur.execute("Delete From option_stat where date='{0}'".format(date))
+    print("option_stat | Deleted | ",date)
     cur.execute("Delete From process_log where source_date='{0}'".format(date))
+    print("process_log | Deleted | ",date)
+
 
     conn.commit()
     conn.close()
@@ -609,7 +716,7 @@ def clearAll():
     conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
     cur = conn.cursor()
 
-    tableNames = ["option_data", "option_stat", "option_flag", "process_log"]
+    tableNames = ["option_data", "option_stat", "process_log"]
 
     try:
         for table in tableNames:
@@ -635,7 +742,17 @@ def clearAll():
 if __name__ == '__main__':
     #
     # dropAllTables()
-    # # clearAll()
+    # clearAll()
+    # clearFilesForDate('2017-01-03')
+    # clearFilesForDate('2017-01-04')
+    # clearFilesForDate('2017-01-05')
+    # clearFilesForDate('2017-01-10')
+    # clearFilesForDate('2017-01-11')
+    # clearFilesForDate('2018-04-23')
+    # clearFilesForDate('2018-05-15')
+    # createShortInt()
+    # clearFilesForDate('2018-05-17')
+
     createAll()
 
     # createOptionFlagInit()
