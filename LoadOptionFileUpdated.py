@@ -224,8 +224,8 @@ class DataLoader():
 
             request = "select * from option_expiry_table order by option_expiration asc"
             expiry = pd.read_sql_query(request, con=connection)
-            if len(expiry) > 0:
-                expiry['option_expiration'] = expiry['option_expiration'].apply(lambda x: x.date())
+            # if len(expiry) > 0:
+            #     expiry['option_expiration'] = expiry['option_expiration'].apply(lambda x: x.date())
             unique_expiries = df['option_expiration'].drop_duplicates()
             print("{0} | {1} Expiries | {2} | {3}".format(dataDate, len(unique_expiries), unique_expiries.min(), unique_expiries.max()))
 
@@ -234,6 +234,8 @@ class DataLoader():
             print("{0} | Read Expiry Error | {1}".format(dataDate,e))
             connection.dispose()
             connection_data.dispose()
+
+            # new_expiries = len(unique_expiries[unique_expiries not in expiry['option_expiration'].values])
 
         try:
             for exp_date in unique_expiries:
@@ -643,10 +645,28 @@ class DataLoader():
 
         dataDate = df['date'].iloc[0].strftime('%y-%m-%d')
         tableName = "data_" + df['option_expiration'].iloc[0].strftime('%m_%d_%Y')
-        connection = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        cur = conn.cursor()
+
+        # connection = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
 
         try:
-            df.to_sql(tableName, connection, if_exists='append', index=False)
+
+            cols = ["date","symbol","stock_price",'option_symbol','option_expiration','strike','call_put','bid','ask','last','volume','open_interest']
+            cols += ['open_interest_new','open_interest_change','open_interest_5day','open_interest_5day_change','iv','delta','gamma','vega']
+            df = df[cols]
+            # df['date'] = df['date'].apply(lambda x: x.strftime('%Y-%m-%d'))
+            # df['option_expiration'] = df['option_expiration'].apply(lambda x: x.strftime('%Y-%m-%d'))
+            temp_file_name = 'temp_upload_{0}.csv'.format(tableName)
+
+            df.to_csv(temp_file_name, index=False, header=False)
+            f = open(temp_file_name, 'r')
+
+            cur.copy_from(f, tableName, sep=',', null="")
+            f.close()
+            os.remove(temp_file_name)
+
+            # df.to_sql(tableName, connection, if_exists='append', index=False)
 
             upload_end = time.time()
             print("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),upload_end - upload_start))
@@ -659,7 +679,9 @@ class DataLoader():
             raise
 
         finally:
-            connection.dispose()
+            cur.close()
+            conn.commit()
+            conn.close()
 
 
 #################################################################################################################################

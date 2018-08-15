@@ -62,9 +62,9 @@ def createOptionsInit():
 
         if (not exists):
             cur.execute(commands)
-            cur.execute("alter table {0} add unique (date, option_symbol)".format(tableName))
-            cur.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(date, symbol);")
-            cur.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(date, option_symbol );")
+            # cur.execute("alter table {0} add unique (date, option_symbol)".format(tableName))
+            # cur.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(date, symbol);")
+            # cur.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(date, option_symbol );")
 
             cur.close()
             conn.commit()
@@ -118,8 +118,8 @@ def createOptionsExpiryInit():
         if conn is not None:
             conn.close()
 
-def createOptionsStatInit():
 
+def createOptionsStatInit():
     tableName = 'option_stat'
 
     commands = (
@@ -338,9 +338,6 @@ def createOptionFlagInit():
     stat_col += ['stock_p5ret_mid', 'stock_p5ret_date', 'stock_p10ret_mid', 'stock_p10ret_date', 'stock_n5ret_mid', 'stock_n5ret_date', 'stock_n10ret_mid', 'stock_n10ret_date']
     stat_col += ['addflag_call_mid', 'addflag_call_mid_date', 'addflag_put_mid', 'addflag_put_mid_date']
     stat_col += ['oi_n50pct_mid', 'oi_n50pct_mid_date', 'oi_n90pct_mid', 'oi_n90pct_mid_date']
-
-
-
 
 
     setup_text = ""
@@ -656,6 +653,27 @@ def clearOptionDataExpiries():
         connection.dispose()
         connection_data.dispose()
 
+def dropOptionDataExpiries():
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+    request = "select * from option_expiry_table order by option_expiration asc"
+    expiry = pd.read_sql_query(request, con=connection)
+    clear = 0
+    try:
+        for table in expiry['table_name']:
+            connection_data.execute("drop table if exists {0}".format(table))
+            clear += 1
+
+        connection.execute("delete from option_expiry_table")
+    except Exception as e:
+        print("clearOptionDataExpiries | ERROR ", e)
+
+    finally:
+        print("Cleared {0} Expiry Option Data Tables".format(clear))
+        connection.dispose()
+        connection_data.dispose()
+
 def clearAllExpiries():
     clearOptionDataExpiries()
     connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
@@ -856,7 +874,8 @@ if __name__ == '__main__':
     # clearFilesForDate('2018-05-15')
     # createShortInt()
     # clearFilesForDate('2018-05-17')
-    clearAllExpiries()
+    dropAllTables()
+    dropOptionDataExpiries()
     createAll()
 
     # createOptionFlagInit()
