@@ -202,7 +202,7 @@ class Flag:
 
         # CALCULATE Z SCORES FOR TOTAL VOL, FM VOL, LARGEST OPTION VOL, LARGEST 5 DAY OI INCREASE. EACH OPTION CAN HAVE MULTIPLE FLAGS
 
-            df_daily['category'] = df_daily['option_expiration'].apply(lambda x: self.option_category(x, date))
+            df_daily['category'] = df_daily[['option_expiration','date']].apply(lambda x: self.option_category(x['option_expiration'], x['date']), axis=1)
 
             df_daily['total_call_z'] = np.where(df_daily['call_put'] == 'C', (df_daily['volume'] - df_daily['call_vol_mean_adj']) / df_daily['call_vol_std_adj'], 0)
             df_daily['total_put_z'] = np.where(df_daily['call_put'] == 'P', (df_daily['volume'] - df_daily['put_vol_mean_adj']) / df_daily['put_vol_std_adj'], 0)

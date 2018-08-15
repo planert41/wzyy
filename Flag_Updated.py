@@ -79,7 +79,8 @@ class Flag:
     def option_category(df, data_date):
 
         if 14 < df.day < 22:
-            if abs((df - data_date.date()).days) <= 70:
+            # if abs((df - data_date.date()).days) <= 70:
+            if abs((df - data_date).days) <= 70:
                 return "FM"
             else:
                 return "BM"
@@ -98,16 +99,19 @@ class Flag:
         flag_start = time.time()
         total_flags = 0
 
-        min_date = date - BDay(days)
-        printid = "{0} TO {1} | {2} Days |".format(min_date, date, days)
-
-        if len(tickers) > 0:
-            printid += " Filter {0} Tickers |".format(len(tickers))
+        if days == 0:
+            min_date = dt.date(1900, 1, 1)
+        else:
+            min_date = date - BDay(days)
 
         # Set date as latest date as default
         if date is None:
             date = dt.datetime.now()
             print("Default Date: ", date)
+
+        printid = "{0} TO {1} | {2} Days |".format(min_date, date, days)
+        if len(tickers) > 0:
+            printid += " Filter {0} Tickers |".format(len(tickers))
 
         # LOAD ALL EXPIRIES
         try:
@@ -130,8 +134,11 @@ class Flag:
 
         # SCREEN FLAGS SPLIT BY EXPIRY TABLE
         try:
+            i = 0
+            table_count = len(expiry['table_name'])
             for expiry_table in expiry['table_name']:
                 # READ OPTION DATA FROM EXPIRY TABLE
+                i += 1
                 expiry_start = time.time()
                 try:
                     if len(tickers) > 0:
@@ -147,6 +154,7 @@ class Flag:
 
                 except Exception as e:
                     print("{0} | Read Option Data ERROR | {1} | {2} ".format(printid, expiry_table, e))
+                    return
 
                 try:
                     num_processes = multiprocessing.cpu_count() * 2 - 4
@@ -158,18 +166,19 @@ class Flag:
 
                 except Exception as e:
                     print("{0} | Process Data ERROR | {1} | {2} ".format(printid, expiry_table, e))
+                    return
 
                 expiry_end = time.time()
-                print("{0} | Processed {1} | Cum Flag: {2} | {3] ".format(printid, expiry_table, total_flags, expiry_end-expiry_start))
+                print("{0} | Processed {1} | Cum Flag: {2} | {3}/{4} | {5} ".format(printid, expiry_table, total_flags, i, table_count, expiry_end-expiry_start))
 
         except Exception as e:
-            print("{0} | Read Option Data ERROR | {1} | {2} ".format(printid, expiry_table, e))
+            print("SCREEN FLAG | ERROR {0} | {1} ".format(printid, e))
 
         finally:
             connection_data.dispose()
             connection.dispose()
             flag_end = time.time()
-            print("{0} | Flag Process Complete | {1} Flags | {2}".format(printid, total_flags, flag_end-flag_start))
+            print("SCREEN FLAG | COMPLETE | {0} | {1} Flags | {2}".format(printid, total_flags, flag_end-flag_start))
 
 
     def processFlagByTicker(self, df_daily):
@@ -202,11 +211,9 @@ class Flag:
 
             df_stat = pd.read_sql_query(request, con=conn)
             df_stat.set_index(pd.DatetimeIndex(df_stat['date']), inplace=True)
-            days = len(df_stat) - avg_window
 
             # FIND START AND END DATES FOR FLAGS
             flag_dates = df_stat['date'].sort_values(ascending=False)
-            flag_dates = flag_dates[flag_dates <= date.date()].head(days)
             start_date = flag_dates.min()
             end_date = flag_dates.max()
 
@@ -238,7 +245,7 @@ class Flag:
             # df_stat.to_csv("stat_check.csv")
 
         except Exception as e:
-            print("Error Retrieving Option Stats | {0} | {1} | {2}".format(ticker_inp, date, e))
+            print("Error Retrieving Option Stats | {0} | {1} TO {2} | {3}".format(ticker_inp, min_date, max_date, e))
             return
 
         # MERGE IN OPTION AVERAGES/STD TO DAILY OPTION DATA FOR COMPARISON
@@ -255,7 +262,7 @@ class Flag:
 
         # CALCULATE Z SCORES FOR TOTAL VOL, FM VOL, LARGEST OPTION VOL, LARGEST 5 DAY OI INCREASE. EACH OPTION CAN HAVE MULTIPLE FLAGS
 
-        df_daily['category'] = df_daily['option_expiration'].apply(lambda x: self.option_category(x, date))
+        df_daily['category'] = df_daily[['option_expiration','date']].apply(lambda x: self.option_category(x['option_expiration'], x['date']),axis=1)
 
         df_daily['total_call_z'] = np.where(df_daily['call_put'] == 'C', (df_daily['volume'] - df_daily['call_vol_mean_adj']) / df_daily['call_vol_std_adj'], 0)
         df_daily['total_put_z'] = np.where(df_daily['call_put'] == 'P', (df_daily['volume'] - df_daily['put_vol_mean_adj']) / df_daily['put_vol_std_adj'], 0)
@@ -309,6 +316,58 @@ class Flag:
             return total_flags
 
 
+
+
+    def analyzeFlags(self, tickers=[], date=None, days=1):
+        analyze_start = time.time()
+
+        if date is None:
+            date = dt.datetime.now()
+            print("Default Date: ", date)
+
+        if days == 0:
+            min_date = dt.date(1900, 1, 1)
+        else:
+            min_date = date - BDay(days)
+
+        printid = "{0} TO {1} | {2} Days | Analyze Flags |".format(min_date, date, days)
+
+        if len(tickers) > 0:
+            printid += " Filter {0} Tickers |".format(len(tickers))
+
+        # Set date as latest date as default
+
+
+        # LOAD ALL EXPIRIES
+        try:
+            connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
+            if len(tickers) > 0:
+                tickers = ["'" + s + "'" for s in tickers]
+                request = "select * from option_flag where symbol in ({0}) and date >= '{1}' and date <= '{2}' order by symbol date asc".format(",".join(tickers), min_date, date)
+            else:
+                request = "select * from option_flag where date >= '{0}' and date <= '{1}' order by symbol date asc".format(min_date, date)
+
+            df_flags = pd.read_sql_query(request, con=connection)
+            print("{0} | Flags Read: {1}".format(printid, len(df_flags)))
+            connection.dispose()
+
+        except Exception as e:
+            print("{0} | Flags Read | ERROR: {1}".format(printid, e))
+            connection.dispose()
+
+        try:
+            self.analyze(df_flags)
+
+        except Exception as e:
+            print("{0} | Analyze Flags | ERROR: {1}".format(printid, e))
+
+        finally:
+            analyze_end = time.time()
+            print("{0} | Flags Analyzed: {1} | FINISH | {2}".format(printid, len(df_flags), analyze_end-analyze_start))
+
+
+    ###############################################################################################################################
 
 
 
@@ -826,6 +885,7 @@ class Flag:
         flag_stats.index.names = ['option_symbol','date']
         # flag_stats.reset_index(inplace=True)
         pm = len(df_flags)
+        df_flags.drop(columns = stat_col, inplace=True)
         df_flags = pd.merge(df_flags, flag_stats, on=['option_symbol','date'], how='left')
         am = len(df_flags)
         if (am != pm):
