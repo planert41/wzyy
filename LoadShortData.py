@@ -101,7 +101,7 @@ def loadShortData(filename):
                  }
     df.rename(columns=df_rename, inplace=True)
 
-    df['date'] = df['record_date'].apply(lambda x: recordDate(x))
+    df['short_date'] = df['record_date'].apply(lambda x: recordDate(x))
     df.drop(columns='record_date', inplace=True)
 
     connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')

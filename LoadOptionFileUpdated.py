@@ -301,7 +301,7 @@ class DataLoader():
         logger.info("{0} | {1} Rec | {2} No OI | Merging | {3} | {4} Rec | {5} No OI".format(dataDate, len(df), zero_OI_count, dataDate_merge, len(df_merge_inp), merge_zero_OI_count))
 
         try:
-            # df_merge = df_merge_inp[df_merge_inp['open_interest'] > 0]
+            df_merge = df_merge_inp[df_merge_inp['open_interest'] > 0]
             df_merge = df_merge_inp[['option_symbol', 'open_interest']]
 
             df_merge.columns = ["option_symbol", fieldname]
@@ -310,7 +310,7 @@ class DataLoader():
             df_merge.set_index("option_symbol",inplace=True)
 
             df = pd.merge(df, df_merge, how='left', on=['option_symbol'])
-            # df[fieldname].fillna(0, inplace=True)
+            df[fieldname].fillna(0, inplace=True)
             df.reset_index(inplace=True)
 
             zero_newOI_count = len(df) - df[fieldname].astype(bool).sum(axis=0)
@@ -413,8 +413,105 @@ class DataLoader():
             # df.drop(columns='data_holes', inplace=True)
             return df, hole_rec_count, hole_ticker_count
 
+    def checkOINew(self, df, OI_field, checkOI_field):
+        # CHECK FOR DATA HOLES
+        checkOI_start = time.time()
+        dataDate = df['date'].iloc[0].strftime('%y-%m-%d')
+        hole_rec_count = 0
+        hole_ticker_count = 0
+
+        try:
+
+            # Volume check is to make sure it wasn't used to fully close out OI and that 0 OI was legit
+            # Checks if OI or NEW_OI = 0. Filters for volume < 50% OI to screen out actual closings or openings
+
+            # df['data_holes'] = df.apply(lambda x: 1 if (x['volume'] < (0.5 * max(x[OI_field], x[checkOI_field]))) & ((x[OI_field] == 0) | (x[checkOI_field] == 0)) else 0, axis=1)
+            # dataHoles = df[df['data_holes'] == 1]
+
+            cond1 = df[OI_field] == 0
+            cond2 = df[checkOI_field] == 0
+            cond3 = df["volume"] < 0.5 * df[[OI_field, checkOI_field]].max(axis=1)
+            cond4 = df["option_expiration"] > df["date"]
+
+            df["dataHole"] = (cond3 & (cond1 | cond2) & cond4)
+            df['max_oi'] = df[[OI_field, checkOI_field]].max(axis=1)
+
+            pre_OI_sum = df[OI_field].sum()
+            pre_OI_check_sum = df[checkOI_field].sum()
+
+            dataHoles = df[df["dataHole"]==True]
+            OI_hole = len(dataHoles[dataHoles[OI_field]==0])
+            check_OI_hole = len(dataHoles[dataHoles[checkOI_field]==0])
+            hole_rec_count = len(dataHoles)
+            hole_ticker_count = dataHoles['symbol'].nunique()
+
+            df[OI_field] = df.apply(lambda x: int(x['max_oi']) if ((x["dataHole"]==True) & (x[OI_field] == 0)) else int(x[OI_field]), axis=1)
+            df[checkOI_field] = df.apply(lambda x: int(x['max_oi']) if ((x["dataHole"]==True) & (x[checkOI_field] == 0)) else int(x[checkOI_field]), axis=1)
+
+            post_OI_sum = df[OI_field].sum()
+            post_OI_check_sum = df[checkOI_field].sum()
+
+            zero_OI_count = len(df) - df[OI_field].astype(bool).sum(axis=0)
+            zero_check_OI_count = len(df) - df[checkOI_field].astype(bool).sum(axis=0)
+            checkOI_end = time.time()
+
+            print("{0} | Total DataHoles | {1} Rec | {2} Tickers | OI {3} to {4}: {5} | New OI {6} to {7}: {8} ".format(dataDate, hole_rec_count, hole_ticker_count,pre_OI_sum, post_OI_sum,post_OI_sum-pre_OI_sum, pre_OI_check_sum,
+                                                                                                                        post_OI_check_sum, post_OI_check_sum - pre_OI_check_sum))
+            logger.info("{0} | Total DataHoles | {1} Rec | {2} Tickers | OI {3} to {4}: {5} | New OI {6} to {7}: {8} ".format(dataDate, hole_rec_count, hole_ticker_count,pre_OI_sum, post_OI_sum,post_OI_sum-pre_OI_sum, pre_OI_check_sum,
+                                                                                                                        post_OI_check_sum, post_OI_check_sum - pre_OI_check_sum))
+
+            print("{0} | {1} Rec | OI Fill {2} | New OI Fill {3} | {4} No OI | {5} No New OI | {6}".format(dataDate, len(df), OI_hole, check_OI_hole, zero_OI_count, zero_check_OI_count, checkOI_end - checkOI_start))
+            logger.info("{0} | {1} Rec | OI Fill {2} | New OI Fill {3} | {4} No OI | {5} No New OI | {6}".format(dataDate, len(df), OI_hole, check_OI_hole, zero_OI_count, zero_check_OI_count, checkOI_end - checkOI_start))
+
+        except Exception as e:
+            checkOI_end = time.time()
+            print("{0} | Data Hole Error | {1} | {2}".format(dataDate.strftime('%Y-%m-%d'), checkOI_end - checkOI_start, e))
+            logger.info("{0} | Data Hole Error | {1} | {2]".format(dataDate.strftime('%Y-%m-%d'), checkOI_end - checkOI_start, e))
+            raise
+
+        finally:
+            df.drop(columns=['dataHole','max_oi'], inplace=True)
+            return df, hole_rec_count, hole_ticker_count
+
 
     def uploadCopy(self, df):
+        upload_start = time.time()
+        dataDate = df['date'].iloc[0].strftime('%y-%m-%d')
+        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        cur = conn.cursor()
+        try:
+
+        # REARRANGE COLUMNS FOR UPLOAD COPY
+            cols = ["date","symbol","stock_price",'option_symbol','option_expiration','strike','call_put','bid','ask','last','volume','open_interest']
+            cols += ['open_interest_new','open_interest_change','open_interest_5day','open_interest_5day_change','iv','delta','gamma','vega']
+            df = df[cols]
+            # df['date'] = df['date'].apply(lambda x: x.strftime('%Y-%m-%d'))
+            # df['option_expiration'] = df['option_expiration'].apply(lambda x: x.strftime('%Y-%m-%d'))
+
+            df.to_csv('temp_upload.csv', index=False, header=False)
+            f = open('temp_upload.csv', 'r')
+
+            cur.copy_from(f, 'option_data', sep=',', null="")
+            f.close()
+            os.remove('temp_upload.csv')
+
+            upload_end = time.time()
+            print("{0} | Upload {1} Recs | {2}".format(dataDate, len(df),upload_end - upload_start))
+            logger.info("{0} | Upload {1} Recs | {2}".format(dataDate, len(df), upload_end - upload_start))
+
+        except Exception as e:
+            upload_end = time.time()
+            print("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, upload_end - upload_start))
+            logger.info("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, upload_end - upload_start))
+            raise
+
+        finally:
+            cur.close()
+            conn.commit()
+            conn.close()
+
+
+    def uploadTest(self, df):
         upload_start = time.time()
         dataDate = df['date'].iloc[0].strftime('%y-%m-%d')
         conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
@@ -528,7 +625,7 @@ class DataLoader():
             df_next = self.format_file(filename_next, df_next)
 
             df = self.mergeOI(df, df_next, "open_interest_new")
-            df, hole_rec_count, hole_ticker_count = self.checkOI(df, "open_interest", "open_interest_new")
+            df, hole_rec_count, hole_ticker_count = self.checkOINew(df, "open_interest", "open_interest_new")
 
 
 
@@ -674,8 +771,9 @@ class DataLoader():
         connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
 
         try:
-            connection_info.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(date, symbol);")
-            connection_info.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(date, option_symbol);")
+            connection_info.execute("SET maintenance_work_mem TO '1 GB'")
+            connection_info.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(option_symbol, date);")
+            connection_info.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(symbol, date);")
 
         except Exception as e:
             print("Index Add ERROR: ", e)
