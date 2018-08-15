@@ -25,7 +25,7 @@ from multiprocessing import Process
 
 def createOptionsInit():
 
-    tableName = 'option_data'
+    tableName = 'option_data_init'
 
     commands = (
         """
@@ -62,9 +62,9 @@ def createOptionsInit():
 
         if (not exists):
             cur.execute(commands)
-            # cur.execute("alter table {0} add unique (date, option_symbol)".format(tableName))
-            # cur.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(date, symbol);")
-            # cur.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(date, option_symbol );")
+            cur.execute("alter table {0} add unique (date, option_symbol)".format(tableName))
+            cur.execute("CREATE INDEX IF NOT EXISTS option_data_symbol_index ON option_data(date, symbol);")
+            cur.execute("CREATE INDEX IF NOT EXISTS option_data_option_symbol_index ON option_data(date, option_symbol );")
 
             cur.close()
             conn.commit()
@@ -79,6 +79,44 @@ def createOptionsInit():
         if conn is not None:
             conn.close()
 
+
+def createOptionsExpiryInit():
+
+    tableName = 'option_expiry_table'
+
+    commands = (
+        """
+        CREATE TABLE {0} (
+        option_expiration date,
+        table_name varchar,
+        added_data_date date,
+        )
+        """.format(tableName))
+    try:
+        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
+        cur = conn.cursor()
+
+        cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
+
+        exists = cur.fetchall()[0][0]
+
+        if (not exists):
+            cur.execute(commands)
+            cur.execute("alter table {0} add unique (option_expiration)".format(tableName))
+            cur.execute("alter table {0} add unique (table_name)".format(tableName))
+
+            cur.close()
+            conn.commit()
+            print("Create {0} Init".format(tableName))
+
+        else:
+            print("Table {0} Already Exists".format(tableName))
+
+    except (Exception, psycopg2.DatabaseError) as error:
+        print(error)
+    finally:
+        if conn is not None:
+            conn.close()
 
 def createOptionsStatInit():
 
@@ -131,7 +169,7 @@ def createOptionsStatInit():
         )
         """.format(tableName))
     try:
-        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -166,8 +204,11 @@ def createProcessLog():
         source_date date,
         source_file varchar,
         date timestamp with time zone,  
-        record_count integer,
+        record_count int,
         ticker_count int,
+        expiry_count int,
+        min_expiry date,
+        max_expiry date,
         prev_oi_update timestamp with time zone,
         prev_oi_update_file varchar,
         prev_oi_data_hole_rec_count int,
@@ -182,7 +223,7 @@ def createProcessLog():
         """.format(tableName))
 
     try:
-        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -259,7 +300,7 @@ def createUnderlyingInit():
         )
         """.format(tableName))
     try:
-        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -449,7 +490,7 @@ def createProcessLogTicker():
         """.format(tableName))
 
     try:
-        conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+        conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
         cur = conn.cursor()
 
         cur.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(tableName))
@@ -595,6 +636,34 @@ def deleteOptionsStatDatabase():
     conn.close()
 
 
+def clearOptionDataExpiries():
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+    request = "select * from option_expiry_table order by option_expiration asc"
+    expiry = pd.read_sql_query(request, con=connection)
+    clear = 0
+    try:
+        for table in expiry['table_name']:
+            connection_data.execute("delete from {0}".format(table))
+            clear += 1
+
+    except Exception as e:
+        print("clearOptionDataExpiries | ERROR ",e)
+
+    finally:
+        print("Cleared {0} Expiry Option Data Tables".format(clear))
+        connection.dispose()
+        connection_data.dispose()
+
+def clearAllExpiries():
+    clearOptionDataExpiries()
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection.execute("delete from option_expiry_table")
+    connection.dispose()
+    print("deleteAllExpiries - SUCCESS")
+
+
 def deleteUnderlyingDatabase():
     DATA_PATH = 'C:\\Users\\Yaos\\Desktop\\Trading\\IVolData\\'
     today = str(dt.date.today()).replace('-', '')
@@ -680,6 +749,7 @@ def createAll():
     createTickerLog()
     createShortInt()
     createETFdataInit()
+    createOptionsExpiryInit()
     print("CREATE ALL - FINISH")
 
 def dropAllTables():
@@ -721,6 +791,28 @@ def clearFilesForDate(date):
     conn.commit()
     conn.close()
     print("FINISH DELETE FOR ", date)
+
+def clearFilesForDate_Expiry(date):
+
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+    request = "select * from option_expiry_table order by option_expiration asc"
+    expiry = pd.read_sql_query(request, con=connection)
+    clear = 0
+    try:
+        for table in expiry['table_name']:
+            connection_data.execute("delete from {0} where date = {1}".format(table, date))
+            clear += 1
+
+    except Exception as e:
+        print("clearOptionDataExpiries | ERROR ",date , e)
+
+    finally:
+        print("Cleared {0} Expiry Option Data Tables for {1}".format(clear, date))
+        connection.dispose()
+        connection_data.dispose()
+
 
 def clearAll():
     # DELETE ALL TABLES
@@ -764,7 +856,7 @@ if __name__ == '__main__':
     # clearFilesForDate('2018-05-15')
     # createShortInt()
     # clearFilesForDate('2018-05-17')
-
+    clearAllExpiries()
     createAll()
 
     # createOptionFlagInit()

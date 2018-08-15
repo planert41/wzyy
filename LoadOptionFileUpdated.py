@@ -55,7 +55,7 @@ if not len(logger.handlers):
 #    @
 class DataLoader():
     def checkFileProcessed(self, filename):
-        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
         try:
             fc = connection_info.execute("select * from process_log where source_file = '{0}'".format(filename)).fetchone()
             connection_info.dispose()
@@ -212,6 +212,67 @@ class DataLoader():
 
         finally:
             return df
+
+
+    def checkExpiry(self, df):
+    # READ IN EXPIRY
+        Add = 0
+        dataDate = df['date'].iloc[0]
+        try:
+            connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+            connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+            request = "select * from option_expiry_table order by option_expiration asc"
+            expiry = pd.read_sql_query(request, con=connection)
+            if len(expiry) > 0:
+                expiry['option_expiration'] = expiry['option_expiration'].apply(lambda x: x.date())
+            unique_expiries = df['option_expiration'].drop_duplicates()
+            print("{0} | {1} Expiries | {2} | {3}".format(dataDate, len(unique_expiries), unique_expiries.min(), unique_expiries.max()))
+
+        except Exception as e:
+            print("{0} | Read Expiry Error | {1}".format(dataDate,e))
+            print("{0} | Read Expiry Error | {1}".format(dataDate,e))
+            connection.dispose()
+            connection_data.dispose()
+
+        try:
+            for exp_date in unique_expiries:
+                if exp_date not in expiry['option_expiration'].values:
+
+                        table_name = "data_" + exp_date.strftime('%m_%d_%Y')
+
+                    # CREATE NEW EXPIRY OPTION DATA TABLE
+                        connection_data.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(table_name))
+                        exists = connection_data.execute("select exists(select * from information_schema.tables where table_name= '{0}')".format(table_name)).fetchone()[0]
+
+                        if exists:
+                            print("{0} Already Exists".format(table_name))
+                        else:
+                            connection_data.execute("create table {0} (like option_data_init including all)".format(table_name))
+                            print("{0} | CREATE NEW EXPIRY TABLE | {1} | {2}".format(dataDate, exp_date, table_name))
+                            logger.info("{0} | CREATE NEW EXPIRY TABLE | {1} | {2}".format(dataDate, exp_date, table_name))
+                            Add += 1
+
+                    # ADD EXPIRY TO EXPIRY TABLE
+                        cur_date = dataDate
+                        connection.execute("insert into option_expiry_table (option_expiration, table_name, added_data_date) values  ('{0}','{1}','{2}')".format(exp_date, table_name, dataDate))
+                        print("{0} | ADD TO OPTION EXPIRY TABLE | {1} | {2}".format(dataDate,exp_date,table_name))
+                        logger.info("{0} | ADD TO OPTION EXPIRY TABLE | {1} | {2}".format(dataDate,exp_date,table_name))
+
+
+            print("{0} | Added {1} Expiration Dates".format(dataDate, Add))
+            logger.info("{0} | Added {1} Expiration Dates".format(dataDate, Add))
+            return len(unique_expiries),unique_expiries.min(), unique_expiries.max()
+
+        except Exception as e:
+            print("{0} | NEW EXPIRY TABLE ERROR | {1} | {2} | {3}".format(dataDate,exp_date,table_name,e))
+            logger.info("{0} | NEW EXPIRY TABLE ERROR | {1} | {2} | {3}".format(dataDate,exp_date,table_name,e))
+            return
+
+        finally:
+            connection.dispose()
+            connection_data.dispose()
+
 
 
     def checkTickerTables(self, df):
@@ -550,7 +611,7 @@ class DataLoader():
     def uploadOptionStatTest(self, df):
         upload_start = time.time()
         dataDate = df['date'].iloc[0]
-        connection_stats = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+        connection_stats = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
 
         try:
             stats = pd.DataFrame()
@@ -572,13 +633,44 @@ class DataLoader():
         finally:
             connection_stats.dispose()
 
+
+
+    def uploadTickerExpiryTest(self, df):
+        upload_start = time.time()
+        if df['option_expiration'].nunique() > 1:
+            print("More than one expiration")
+            return
+
+        dataDate = df['date'].iloc[0].strftime('%y-%m-%d')
+        tableName = "data_" + df['option_expiration'].iloc[0].strftime('%m_%d_%Y')
+        connection = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+        try:
+            df.to_sql(tableName, connection, if_exists='append', index=False)
+
+            upload_end = time.time()
+            print("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),upload_end - upload_start))
+            logger.info("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),upload_end - upload_start))
+
+        except Exception as e:
+            upload_end = time.time()
+            print("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, upload_end - upload_start))
+            logger.info("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, upload_end - upload_start))
+            raise
+
+        finally:
+            connection.dispose()
+
+
 #################################################################################################################################
 
 
     def loadOptionsHistoricaDoubleLoadTest(self, filename, filename_next = "", filename_5d = "", tickers = []):
         process = psutil.Process(os.getpid())
         filename = filename.replace(".zip", "")
-        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+        connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+        connection_info = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+
         file_start = time.time()
 
         # Check if current date file has already been processed. Skips processing if already processed.
@@ -590,7 +682,7 @@ class DataLoader():
         logger.info("Before Extract File: {0} MEM:{1} MB".format(filename, (process.memory_info().rss / 1048576)))
 
         # CREATE TICKER LOG
-        process_log_cols = ['source_date', 'source_file', 'date', 'record_count', 'ticker_count', 'prev_oi_update', 'prev_oi_update_file', 'prev_oi_data_hole_rec_count', 'prev_oi_data_hole_ticker_count',
+        process_log_cols = ['source_date', 'source_file', 'date', 'record_count', 'ticker_count', 'expiry_count', 'min_expiry','max_expiry','prev_oi_update', 'prev_oi_update_file', 'prev_oi_data_hole_rec_count', 'prev_oi_data_hole_ticker_count',
                             'prev_5day_oi_update', 'prev_5day_oi_update_file', 'upload_date', 'stat_date', 'flag_date', 'process_time']
         process_log = pd.DataFrame(columns=process_log_cols, index=[])
         process_log.loc[len(process_log)] = np.repeat(np.nan, len(process_log_cols))
@@ -615,6 +707,8 @@ class DataLoader():
         load_end = time.time()
         print("{0} | FINISH | Loading {1} | {2}".format(filename,filename,load_end-load_start))
 
+    # CHECK DATA FOR NEW EXPIRIES
+        process_log['expiry_count'],process_log['min_expiry'],process_log['max_expiry'] = self.checkExpiry(df)
 
     # READ NEXT DAY FILE
         if filename_next == "":
@@ -626,8 +720,6 @@ class DataLoader():
 
             df = self.mergeOI(df, df_next, "open_interest_new")
             df, hole_rec_count, hole_ticker_count = self.checkOINew(df, "open_interest", "open_interest_new")
-
-
 
             # df['open_interest_change'] = df.apply(lambda x: (x['open_interest_new'] - x['open_interest']) if ~math.isnan(x['open_interest_new']) else 0, axis=1)
             # df['open_interest_change'].fillna(0, inplace=True)
@@ -672,10 +764,21 @@ class DataLoader():
 
 
     # UPLOAD EOD DATA
+    #     upload_start = time.time()
+    #     self.uploadCopy(df)
+    #     upload_end = time.time()
+    #     print("{0} | FINISH | Upload | {1}".format(filename, upload_end - upload_start))
+
+    # UPLOAD EOD DATA BY EXPIRY
+
         upload_start = time.time()
-        self.uploadCopy(df)
-        upload_end = time.time()
-        print("{0} | FINISH | Upload | {1}".format(filename, upload_end - upload_start))
+        print("{0} | Upload Starts | {1}".format(filename, process_log['expiry_count']))
+        num_processes = multiprocessing.cpu_count() * 2 - 4
+        chunks = [chunk[1] for chunk in df.groupby('option_expiration')]
+        pool = multiprocessing.Pool(processes=num_processes)
+        pool.map(self.uploadTickerExpiryTest, chunks, chunksize=1)
+        pool.close()
+        pool.join()
 
         process_log['upload_date'] = dt.datetime.now()
         process_log['record_count'] = len(df)
@@ -694,12 +797,18 @@ class DataLoader():
         process_log['process_time'] = file_end - file_start
 
         upload_start = time.time()
-        process_log.to_sql('process_log', connection_info, if_exists='append', index=False)
-        upload_end = time.time()
-        print("{0} | FINISH | Process Log | {1}".format(filename, upload_end - upload_start))
-        print("{0} | Upload process_log | {1} Data| {2} recs| {3} tickers | {4} | {5}".format(filename, df['date'].iloc[0], len(df), len(unique_tickers), pd.datetime.now().strftime('%m/%d/%Y'), file_end - file_start))
-        logger.info("{0} | Upload process_log | {1} Data| {2} recs| {3} tickers | {4} | {5}".format(filename, df['date'].iloc[0], len(df), len(unique_tickers), pd.datetime.now().strftime('%m/%d/%Y'), file_end - file_start))
-        connection_info.dispose()
+        try:
+            process_log.to_sql('process_log', connection_info, if_exists='append', index=False)
+            upload_end = time.time()
+            print("{0} | FINISH | Process Log | {1}".format(filename, upload_end - upload_start))
+            print("{0} | Upload process_log | {1} Data| {2} recs| {3} tickers | {4} | {5}".format(filename, df['date'].iloc[0], len(df), len(unique_tickers), pd.datetime.now().strftime('%m/%d/%Y'), file_end - file_start))
+            logger.info("{0} | Upload process_log | {1} Data| {2} recs| {3} tickers | {4} | {5}".format(filename, df['date'].iloc[0], len(df), len(unique_tickers), pd.datetime.now().strftime('%m/%d/%Y'), file_end - file_start))
+        except Exception as e:
+            print("{0} | Upload Process Log Error | {1}".format(filename, e))
+            logger.info("{0} | Upload Process Log Error | {1}".format(filename, e))
+        finally:
+            connection_data.dispose()
+            connection_info.dispose()
 
 
     ##################################################################################################################################
@@ -711,16 +820,31 @@ class DataLoader():
                     WHERE datname = 'option_data'
                     AND pid <> pg_backend_pid();
                 """)
+
+        commands_wz = ("""SELECT pg_terminate_backend(pg_stat_activity.pid)
+                    FROM pg_stat_activity
+                    WHERE datname = 'wzyy_options'
+                    AND pid <> pg_backend_pid();
+                """)
         try:
+            conn = psycopg2.connect("dbname = 'option_data' user='postgres' host = 'localhost' password = 'inkstain'")
+            cur = conn.cursor()
+            cur.execute(commands)
+            cur.close()
+            conn.commit()
+            conn.close()
+
             conn = psycopg2.connect("dbname = 'wzyy_options' user='postgres' host = 'localhost' password = 'inkstain'")
             cur = conn.cursor()
             cur.execute(commands)
             cur.close()
             conn.commit()
             conn.close()
+
             print("Terminate Connections")
         except (Exception, psycopg2.DatabaseERROR) as ERROR:
             print(ERROR)
+
 
     def addOptionDataConstraint(self):
         index_start = time.time()
@@ -820,11 +944,6 @@ class DataLoader():
             print("Re-index Option Data |", index_end - index_start)
 
 
-
-
-
-
-
     ##################################################################################################################################
 
 
@@ -880,6 +999,9 @@ if __name__ == '__main__':
 
     df_files['year'] = df_files['filename'].astype(str).str[:4]
     df_files = df_files.loc[df_files['year'] == '2018']
+
+    # df_files = df_files[df_files['filename']=='20180613_OData.csv']
+
 
     dl = DataLoader()
     # dl.addOptionDataConstraint()

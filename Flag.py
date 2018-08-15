@@ -26,6 +26,7 @@ from psycopg2.extensions import register_adapter, AsIs
 def addapt_numpy_float64(numpy_float64):
   return AsIs(numpy_float64)
 
+from LoadOptionFileUpdated import DataLoader as dl
 
 option_database = 'postgresql://postgres:inkstain@localhost:5432/option_data'
 wzyy_database = 'postgresql://postgres:inkstain@localhost:5432/wzyy_options'
@@ -79,7 +80,7 @@ class Flag:
         else:
             return "WK"
 
-    def unusual_screen(self, tickers =[], date=None, days=1):
+    def unusual_screen(self, tickers=[], date=None, days=1):
     #
     # 1) DAILY OPTION STATS ARE READ IN AND ROLLING VOLUME AVERAGES ARE CALCULATED
     # 2) DAILY OPTION DATA ARE READ VOLUME AVERAGES ARE MERGED IN
@@ -90,7 +91,6 @@ class Flag:
     # Function defaults to screening ticker for today - 1 Day
         flag_start = time.time()
         total_flags = 0
-        conn = create_engine(option_database)
 
     # Set date as latest date as default
         if date is None:
@@ -104,13 +104,16 @@ class Flag:
     # LOAD TICKERS
         if len(tickers) == 0:
             # DEFAULT TICKERS IS ALL CURRENTLY STILL ACTIVE TICKERS
-            tickers = existingTickers().all()
+            tickers_ref = existingTickers().all()
+            tickers = tickers_ref['symbol']
+            # print(tickers.head())
 
         print("Flag Start : {0} Tickers | {1} | {2} ".format(len(tickers), date, days))
 
     # LOOP THROUGH TICKERS
 
         for ticker_inp in tickers:
+            conn = create_engine(option_database)
 
             ticker_start = time.time()
             printid = "{0} {1}: {2} Day".format(ticker_inp, date.strftime('%Y-%m-%d'), days)
@@ -230,33 +233,35 @@ class Flag:
 
             temp_flags = df_daily[df_daily['flag'] != 0].copy()
             # Dropping the ind call/put z scores as they are already reflected in the total/fm z scores. The other zscore would just be 0s
-            temp_flags.drop(columns=['total_call_z', 'total_put_z', 'fm_call_z', 'fm_put_z'], inplace=True)
+            print("{0} | {1} - {2} | {3} Flags".format(printid, start_date, end_date, len(temp_flags)))
+
+            if len(temp_flags)>0:
+                temp_flags.drop(columns=['total_call_z', 'total_put_z', 'fm_call_z', 'fm_put_z'], inplace=True)
 
             # print(temp_flags.head())
 
             try:
-                temp_flags = self.analyze(temp_flags)
-                # print("TEMP FLAG: ",temp_flags.info())
-                print(temp_flags.head())
+                if len(temp_flags)>0:
+                    temp_flags = self.analyze(temp_flags)
+
             except Exception as e:
                 print("Flag Analysis Error | ", e)
 
             try:
-                # temp_flags.drop(columns=['volume','open_interest','open_interest_new','open_interest_change','open_interest_5day','open_interest_5day_change','call_ind','put_ind','etf'],inplace=True)
-                temp_flags.to_csv('test_flags.csv')
-                temp_flags.drop(columns=['shares_float','shares_outstanding'],inplace=True)
-                # Need to convert the short float to an int
-                temp_flags['short_int'] = temp_flags['short_int'].apply(lambda x: np.asscalar(x))
-                conn_flag = create_engine(wzyy_database)
-                temp_flags.to_sql("option_flag", conn_flag, if_exists='append', index=False)
+                if len(temp_flags)>0:
+                    temp_flags.drop(columns=['shares_float','shares_outstanding'],inplace=True)
+                    temp_flags['short_int'] = temp_flags['short_int'].apply(lambda x: np.asscalar(x))
+                    conn_flag = create_engine(wzyy_database)
+                    temp_flags.to_sql("option_flag", conn_flag, if_exists='append', index=False)
                 ticker_end = time.time()
-                conn_flag.dispose()
+
                 print('{0} | {1} Flags Uploaded | {2}'.format(printid, len(temp_flags), ticker_end - ticker_start))
                 total_flags += len(temp_flags)
             except Exception as e:
                 print('{0} | Uploaded Flags ERROR | {1}'.format(printid, e))
                 continue
 
+        conn_flag.dispose()
         conn.dispose()
         flag_end = time.time()
         print("Flag Complete : {0} Tickers | {1} | {2} | {3} Flags | {4}".format(len(tickers), date, days, total_flags, flag_end - flag_start))
@@ -366,6 +371,9 @@ class Flag:
                     print("Read Price Error: No Price Data For ", symbol)
             except Exception as e:
                 print("Flag Analysis | ERROR | Underlying Price Data | {0} {1} - {2} | {3}".format(symbol, symbol_min_date, symbol_max_date,e))
+                symbol.to_csv('Missing_Price_Data.csv', mode='a', header=False)
+
+
                 return
 
         # CALCULATE TOTAL FLAG_IND FOR EACH UNDERLYING PRICE DAY
@@ -455,7 +463,7 @@ class Flag:
                     # print("Flag Analysis | Option Data | {0} | {1} - {2} | {3} Prices".format(flag.option_symbol, flag_price['date'].min(), flag_price['date'].max(), len(flag_price)))
 
                 # CALCULATED MID PRICE - LAST IF LAST IN (BID/ASK), ELSE IF BID/ASK SPREAD WIDER THAN BID, MID = 1.5 BID, ELSE MID(BID+ASK)
-                    flag_price['mid'] = flag_price.apply(lambda x: x['last'] if x['bid'] <= x['last'] <= x['ask'] else ((x['bid'] + x['ask'])/2 if ((x['ask'] - x['bid'])/x['bid']) < 1 else x['bid']*1.5), axis=1)
+                    flag_price['mid'] = flag_price.apply(lambda x: x['last'] if x['bid'] <= x['last'] <= x['ask'] else (0 if x['bid'] == 0 else ((x['bid'] + x['ask'])/2 if ((x['ask'] - x['bid'])/x['bid']) < 1 else x['bid']*1.5)), axis=1)
                     flag_price['mid'] = flag_price.apply(lambda x: 0 if x['bid'] == 0 else x['mid'], axis=1)
                     flag_price['mid'] = flag_price['mid'].apply(lambda x: round(x, 2))
 
@@ -808,10 +816,10 @@ class Flag:
 if __name__ == '__main__':
     # register_adapter(numpy.float64, addapt_numpy_float64)
 
-    ticker = ["GME", 'TPX', 'TROX', 'AAPL', 'JAG', 'BBBY', 'QCOM', 'FDC', 'BLL', 'XRT']
-
-    ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
-    ticker = ['TPX']
+    # ticker = ["GME", 'TPX', 'TROX', 'AAPL', 'JAG', 'BBBY', 'QCOM', 'FDC', 'BLL', 'XRT']
+    #
+    # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
+    ticker = []
     fl = Flag()
     fl.unusual_screen(ticker, days=0)
     # fl.analyze()

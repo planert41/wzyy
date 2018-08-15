@@ -324,9 +324,9 @@ if __name__ == '__main__':
     # finally:
         connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
         dm = DataManager()
-        # test = dm.fetchUnderlyingMS("TUBE", date_length='full')
+        test = dm.fetchUnderlyingMS("AAAP", date_length='full')
         # existingTickers.fetchAllPrices(existingTickers)
-        existingTickers.update(existingTickers)
+        # existingTickers.update(existingTickers)
         # dm.loadETF()
 
         # connection.execute("CREATE INDEX underlying_symbol_index ON option_data (symbol);")
