@@ -668,14 +668,16 @@ class DataLoader():
 
             # df.to_sql(tableName, connection, if_exists='append', index=False)
 
+
+
             upload_end = time.time()
-            print("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),upload_end - upload_start))
-            logger.info("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),upload_end - upload_start))
+            print("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),"{0:.4f}".format(upload_end - upload_start)))
+            logger.info("{0} | {1} | Upload {2} Recs | {3}".format(dataDate, tableName, len(df),"{0:.4f}".format(upload_end - upload_start)))
 
         except Exception as e:
             upload_end = time.time()
-            print("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, upload_end - upload_start))
-            logger.info("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, upload_end - upload_start))
+            print("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, "{0:.4f}".format(upload_end - upload_start)))
+            logger.info("{0} | Upload ERROR | {1} | {2}".format(dataDate, e, "{0:.4f}".format(upload_end - upload_start)))
             raise
 
         finally:
@@ -1020,7 +1022,7 @@ if __name__ == '__main__':
     df_files['filename_5day'] = df_files['filename'].shift(5)
 
     df_files['year'] = df_files['filename'].astype(str).str[:4]
-    df_files = df_files.loc[df_files['year'] == '2018']
+    df_files = df_files.loc[df_files['year'] == '2016']
 
     # df_files = df_files[df_files['filename']=='20180613_OData.csv']
 

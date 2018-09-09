@@ -81,6 +81,19 @@ class Flag:
         else:
             return "WK"
 
+    def export(self, filename):
+        conn = create_engine(wzyy_database)
+        try:
+            request = "SELECT * FROM option_flag"
+            df_daily = pd.read_sql(request, conn)
+            df_daily.to_csv(filename)
+            print("Flags Exported To ",filename)
+        except Exception as e:
+            print("EXPORT ERROR",e)
+        finally:
+            conn.dispose()
+
+
     def unusual_screen(self, tickers=[], date=None, days=1):
         #
         # 1) DAILY OPTION STATS ARE READ IN AND ROLLING VOLUME AVERAGES ARE CALCULATED
@@ -824,5 +837,6 @@ if __name__ == '__main__':
     # ticker = ["GME",'TPX','TROX','AAPL','JAG','BBBY','QCOM','FDC','BLL','XRT','DPLO','USG','CPB','WWE','FOSL','WIN','ACXM']
     ticker = []
     fl = Flag()
-    fl.unusual_screen(ticker, days=0)
+    # fl.unusual_screen(ticker, days=0)
+    fl.export("OPTION_FLAG.csv")
     # fl.analyze()

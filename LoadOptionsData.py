@@ -2275,7 +2275,7 @@ if __name__ == '__main__':
 
 
     for row in df_files.itertuples():
-        if row.filename[:8] == '20180515':
+        if row.filename[:4] == '2016':
             print("             ")
             try:
                 DataLoader().loadOptionsHistoricaDoubleLoadTest(row.filename, row.filename_next, ticker)

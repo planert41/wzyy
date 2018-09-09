@@ -324,7 +324,7 @@ if __name__ == '__main__':
     # finally:
         connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
         dm = DataManager()
-        test = dm.fetchUnderlyingMS("AAAP", date_length='full')
+        test = dm.fetchUnderlyingMS("TWX", date_length='full')
         # existingTickers.fetchAllPrices(existingTickers)
         # existingTickers.update(existingTickers)
         # dm.loadETF()

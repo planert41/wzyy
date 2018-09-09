@@ -13,6 +13,7 @@ import logging
 import zipfile
 import psycopg2
 from sqlalchemy import create_engine
+import time
 
 from multiprocessing import Pool
 import multiprocessing
@@ -90,6 +91,7 @@ def createOptionsExpiryInit():
         option_expiration date,
         table_name varchar,
         added_data_date date,
+        symbols varchar[]
         )
         """.format(tableName))
     try:
@@ -296,7 +298,14 @@ def createUnderlyingInit():
         volume bigint,
         sma_200 numeric(10,2),
         sma_100 numeric(10,2),
-        ema_8 numeric(10,2)
+        ema_8 numeric(10,2),
+        sma_50 numeric(10,2),
+        high_52w numeric(10,2),
+        low_52w numeric(10,2),
+        high_100d numeric(10,2),
+        low_100d numeric(10,2),
+        high_30d numeric(10,2),
+        low_30d numeric(10,2)
         )
         """.format(tableName))
     try:
@@ -329,8 +338,9 @@ def createUnderlyingInit():
 def createOptionFlagInit():
     tableName = 'option_flag'
 
+
     stat_col = ['open_high', 'open_high_date', 'open_low', 'open_low_date', 'close_high', 'close_high_date', 'close_low', 'close_low_date']
-    stat_col += ['max_high', 'max_high_date', 'min_low', 'min_low_date', 'opt_last_high', 'opt_last_high_date', 'opt_mid_high', 'opt_mid_high_date','opt_expiry_value']
+    stat_col += ['max_high', 'max_high_date', 'min_low', 'min_low_date', 'opt_last_high', 'opt_last_high_date', 'opt_mid_high', 'opt_mid_high_date','expiry_stock_price','opt_expiry_value']
     stat_col += ['opt_mid_drawdown_bmax', 'opt_mid_drawdown_bmax_date', 'max_drawdown_bmax', 'max_drawdown_bmax_date', 'hit_itm_mid', 'hit_itm_date', 'close_itm_mid', 'close_itm_date']
     stat_col += ['close_sma200_mid', 'close_sma200_date', 'close_sma100_mid', 'close_sma100_date', 'close_sma50_mid', 'close_sma50_date', 'close_ema8_mid', 'close_ema8_date']
     stat_col += ['high_52w_mid', 'high_52w_date', 'low_52w_mid', 'low_52w_date', 'high_100d_mid', 'high_100d_date', 'low_100d_mid', 'low_100d_date', 'high_30d_mid', 'high_30d_date', 'low_30d_mid', 'low_30d_date']
@@ -358,6 +368,7 @@ def createOptionFlagInit():
         stock_price numeric(10,2),
         option_symbol varchar,
         option_expiration date,
+        expiry_days integer,
         strike numeric(10,2),
         call_put char,
         ask numeric(10,2),
@@ -376,6 +387,21 @@ def createOptionFlagInit():
         gamma numeric(10,4),
         vega numeric(10,4),
 
+        close numeric(10,2),
+        high numeric(10,2),
+        low numeric(10,2),
+        open numeric(10,2),
+        sma_200 numeric(10,2),
+        sma_100 numeric(10,2),
+        ema_8 numeric(10,2),
+        sma_50 numeric(10,2),
+        high_52w numeric(10,2),
+        low_52w numeric(10,2),
+        high_100d numeric(10,2),
+        low_100d numeric(10,2),
+        high_30d numeric(10,2),
+        low_30d numeric(10,2),
+
         category varchar,
 
         flag integer,
@@ -390,21 +416,21 @@ def createOptionFlagInit():
         largest_z numeric(10,4),   
         largest_5dayoi_z numeric(10,4),        
 
-        call_vol_mean_adj numeric(10,4),
-        call_vol_std_adj numeric(10,4), 
-        put_vol_mean_adj numeric(10,4),    
-        put_vol_std_adj numeric(10,4), 
+        call_vol_mean_adj numeric(14,4),
+        call_vol_std_adj numeric(14,4), 
+        put_vol_mean_adj numeric(14,4),    
+        put_vol_std_adj numeric(14,4), 
 
-        fm_call_vol_mean_adj numeric(10,4),
-        fm_call_vol_std_adj numeric(10,4), 
-        fm_put_vol_mean_adj numeric(10,4),    
-        fm_put_vol_std_adj numeric(10,4), 
+        fm_call_vol_mean_adj numeric(14,4),
+        fm_call_vol_std_adj numeric(14,4), 
+        fm_put_vol_mean_adj numeric(14,4),    
+        fm_put_vol_std_adj numeric(14,4), 
 
-        largest_vol_mean_adj numeric(10,4),
-        largest_vol_std_adj numeric(10,4),
+        largest_vol_mean_adj numeric(14,4),
+        largest_vol_std_adj numeric(14,4),
         
-        largest_5dayoi_mean_adj numeric(10,4),
-        largest_5dayoi_vol_adj numeric(10,4),
+        largest_5dayoi_mean_adj numeric(14,4),
+        largest_5dayoi_vol_adj numeric(14,4),
         
         {1}
         
@@ -418,6 +444,8 @@ def createOptionFlagInit():
         put_flag_dates varchar[],
         
         underlying_price_array numeric(10,2)[],
+        underlying_price_high_array numeric(10,2)[],
+        underlying_price_low_array numeric(10,2)[],
         bid_price_array numeric(10,2)[], 
         ask_price_array numeric(10,2)[],               
         mid_price_array numeric(10,2)[],
@@ -810,6 +838,7 @@ def clearFilesForDate(date):
     conn.close()
     print("FINISH DELETE FOR ", date)
 
+
 def clearFilesForDate_Expiry(date):
 
     connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
@@ -861,6 +890,98 @@ def clearAll():
 
     print("CLEAR ALL - FINISH")
 
+
+def indexData():
+    process_start = time.time()
+
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+    request = "select * from option_expiry_table order by option_expiration asc"
+    expiry = pd.read_sql_query(request, con=connection)
+    clear = 0
+
+    try:
+        for table in expiry['table_name']:
+            index_start = time.time()
+
+            connection_data.execute("SET maintenance_work_mem TO '1 GB'")
+            connection_data.execute("CREATE INDEX IF NOT EXISTS {0}_option_symbol_index ON {0}(option_symbol, date);".format(table))
+            connection_data.execute("CREATE INDEX IF NOT EXISTS {0}_symbol_index ON {0}(symbol, date);".format(table))
+            clear += 1
+            index_end = time.time()
+            print("Indexed {0} | {1}".format(table, index_end-index_start))
+
+    except Exception as e:
+        print("clearOptionDataExpiries | ERROR ", e)
+
+    finally:
+        connection.dispose()
+        connection_data.dispose()
+        process_end = time.time()
+        print("Created Index for {0} Option Data Tables | {1}".format(clear, process_end - process_start))
+
+
+
+def removIndexData():
+    process_start = time.time()
+
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+    request = "select * from option_expiry_table order by option_expiration asc"
+    expiry = pd.read_sql_query(request, con=connection)
+    clear = 0
+
+    try:
+        for table in expiry['table_name']:
+            index_start = time.time()
+            connection_data.execute("DROP INDEX IF EXISTS {0}_option_symbol_index;".format(table))
+            connection_data.execute("DROP INDEX IF EXISTS {0}_symbol_index;".format(table))
+            clear += 1
+            index_end = time.time()
+            print("Indexed {0} | {1}".format(table, index_end-index_start))
+
+    except Exception as e:
+        print("clearOptionDataExpiries | ERROR ", e)
+
+    finally:
+        connection.dispose()
+        connection_data.dispose()
+        process_end = time.time()
+        print("Created Index for {0} Option Data Tables | {1}".format(clear, process_end - process_start))
+
+
+def updateOptionExpiry():
+    connection = create_engine('postgresql://postgres:inkstain@localhost:5432/wzyy_options')
+    connection_data = create_engine('postgresql://postgres:inkstain@localhost:5432/option_data')
+
+    request = "select * from option_expiry_table order by option_expiration asc"
+    expiry = pd.read_sql_query(request, con=connection)
+    try:
+        for table in expiry['table_name']:
+            data_request = "select distinct(symbol) from {0}".format(table)
+            symbols = pd.read_sql_query(data_request, con=connection_data)
+            list = symbols['symbol'].tolist()
+            list = str(map(str, list))
+            list = list.replace('[', '{').replace(']', '}').replace('\'', '\"')
+            print(list)
+            # flag_price['mid'].tolist()
+            connection.execute("update option_expiry_table set symbols = {0} where table_name = {1}".format(list, table))
+            print("{0} | Inserted {1} Symbols".format(table, len(symbols)))
+
+    except Exception as e:
+        print("updateOptionExpiry | ERROR ", e)
+
+    finally:
+        connection.dispose()
+        connection_data.dispose()
+        process_end = time.time()
+        print("updateOptionExpiry END")
+
+
+
+
 if __name__ == '__main__':
     #
     # dropAllTables()
@@ -874,12 +995,15 @@ if __name__ == '__main__':
     # clearFilesForDate('2018-05-15')
     # createShortInt()
     # clearFilesForDate('2018-05-17')
-    dropAllTables()
-    dropOptionDataExpiries()
-    createAll()
-
+    # dropAllTables()
+    # dropOptionDataExpiries()
+    # createAll()
+    # indexData()
+    createOptionFlagInit()
+    # removIndexData()
     # createOptionFlagInit()
 
+    # updateOptionExpiry()
 
     # clearFilesForDate('2018-07-23')
     # createOptionsInitFile()
